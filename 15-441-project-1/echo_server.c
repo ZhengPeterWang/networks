@@ -21,6 +21,7 @@
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
+#define MAX_CLIENT FD_SETSIZE
 
 int close_socket(int sock)
 {
@@ -32,16 +33,16 @@ int close_socket(int sock)
     return 0;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
-    int sock, client_sock;
+    int sock, client_sock[MAX_CLIENT];
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr, cli_addr;
     char buf[BUF_SIZE];
 
     fprintf(stdout, "----- Echo Server -----\n");
-    
+
     /* all networked programs must create a socket */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
@@ -54,13 +55,12 @@ int main(int argc, char* argv[])
     addr.sin_addr.s_addr = INADDR_ANY;
 
     /* servers bind sockets to ports---notify the OS they accept connections */
-    if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
         close_socket(sock);
         fprintf(stderr, "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
-
 
     if (listen(sock, 5))
     {
@@ -69,49 +69,110 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
+    for (int i = 0; i < MAX_CLIENT; ++i)
+    {
+        client_sock[i] = 0;
+    }
+
+    fd_set readfds;
+
     /* finally, loop waiting for input and then write it back */
     while (1)
     {
-       cli_size = sizeof(cli_addr);
-       if ((client_sock = accept(sock, (struct sockaddr *) &cli_addr,
-                                 &cli_size)) == -1)
-       {
-           close(sock);
-           fprintf(stderr, "Error accepting connection.\n");
-           return EXIT_FAILURE;
-       }
-       
-       readret = 0;
+        FD_ZERO(&readfds);
+        FD_SET(sock, &readfds);
 
-       while((readret = recv(client_sock, buf, BUF_SIZE, 0)) >= 1)
-       {
-           if (send(client_sock, buf, readret, 0) != readret)
-           {
-               close_socket(client_sock);
-               close_socket(sock);
-               fprintf(stderr, "Error sending to client.\n");
-               return EXIT_FAILURE;
-           }
-           memset(buf, 0, BUF_SIZE);
-       } 
+        int max_sd = sock;
 
-       if (readret == -1)
-       {
-           close_socket(client_sock);
-           close_socket(sock);
-           fprintf(stderr, "Error reading from client socket.\n");
-           return EXIT_FAILURE;
-       }
+        //add child sockets to set
+        for (int i = 0; i < MAX_CLIENT; i++)
+        {
+            //socket descriptor
+            int sd = client_sock[i];
 
-       if (close_socket(client_sock))
-       {
-           close_socket(sock);
-           fprintf(stderr, "Error closing client socket.\n");
-           return EXIT_FAILURE;
-       }
+            //if valid socket descriptor then add to read list
+            if (sd > 0)
+                FD_SET(sd, &readfds);
+
+            //highest file descriptor number, need it for the select function
+            if (sd > max_sd)
+                max_sd = sd;
+        }
+
+        if (select(max_sd + 1, &readfds, NULL, NULL, NULL) < 0)
+        {
+            close(sock);
+            fprintf(stderr, "Error select.\n");
+            return EXIT_FAILURE;
+        }
+        if (FD_ISSET(sock, &readfds))
+        {
+            cli_size = sizeof(cli_addr);
+            int new_socket;
+            if ((new_socket = accept(sock, (struct sockaddr *)&cli_addr,
+                                     &cli_size)) == -1)
+            {
+                close(sock);
+                fprintf(stderr, "Error accepting connection.\n");
+                return EXIT_FAILURE;
+            }
+            printf("New connection , socket fd is %d  \n", new_socket);
+
+            for (int i = 0; i < MAX_CLIENT; i++)
+            {
+                if (client_sock[i] == 0)
+                {
+                    client_sock[i] = new_socket;
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < MAX_CLIENT; i++)
+        {
+            int sd = client_sock[i];
+
+            readret = 0;
+
+            if (FD_ISSET(sd, &readfds))
+            {
+
+                while ((readret = recv(sd, buf, BUF_SIZE, 0)) >= 1)
+                {
+
+                    if (send(sd, buf, readret, 0) != readret)
+                    {
+                        close_socket(sd);
+                        close_socket(sock);
+                        fprintf(stderr, "Error sending to client.\n");
+                        return EXIT_FAILURE;
+                    }
+                    memset(buf, 0, BUF_SIZE);
+                }
+
+                if (readret == -1)
+                {
+                    close_socket(sd);
+                    close_socket(sock);
+                    fprintf(stderr, "Error reading from client socket.\n");
+                    return EXIT_FAILURE;
+                }
+
+                if (close_socket(sd))
+                {
+                    close_socket(sock);
+                    fprintf(stderr, "Error closing client socket.\n");
+                    return EXIT_FAILURE;
+                }
+                else
+                {
+                    client_sock[i] = 0;
+                }
+            }
+        }
+
+        close_socket(sock);
+
+        return EXIT_SUCCESS;
     }
-
-    close_socket(sock);
-
-    return EXIT_SUCCESS;
 }
