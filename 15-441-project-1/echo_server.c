@@ -19,6 +19,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "parse.h"
+
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
 #define MAX_CLIENT FD_SETSIZE
@@ -136,10 +138,19 @@ int main(int argc, char *argv[])
 
             if (FD_ISSET(sd, &readfds))
             {
-
+                printf("Potato\n");
                 while ((readret = recv(sd, buf, BUF_SIZE, 0)) >= 1)
                 {
 
+                    /*Request *request = parse(buf, readret, sd);
+
+                    if (request == NULL)
+                    {
+                        // parsing failed
+                        // send a response of 400
+                    }
+
+                    else */
                     if (send(sd, buf, readret, 0) != readret)
                     {
                         close_socket(sd);
@@ -170,9 +181,11 @@ int main(int argc, char *argv[])
                 }
             }
         }
-
-        close_socket(sock);
-
-        return EXIT_SUCCESS;
     }
+
+    printf("Token\n");
+
+    close_socket(sock);
+
+    return EXIT_SUCCESS;
 }
