@@ -67,6 +67,7 @@ Request *parse(char *buffer, int size, int socketFd)
 
 		if (yyparse() == SUCCESS)
 		{
+			printf("Parsing succeeded!\n");
 			return request;
 		}
 	}
