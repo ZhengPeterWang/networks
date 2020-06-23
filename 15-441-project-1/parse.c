@@ -65,6 +65,8 @@ Request *parse(char *buffer, int size, int socketFd)
 		request->headers = (Request_header *)malloc(sizeof(Request_header) * 1);
 		set_parsing_options(buf, i, request);
 
+		sleep(20);
+
 		if (yyparse() == SUCCESS)
 		{
 			printf("Parsing succeeded!\n");

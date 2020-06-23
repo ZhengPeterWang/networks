@@ -146,17 +146,17 @@ int main(int argc, char *argv[])
                 {
                     printf("Start parsing... \n");
 
-                    char new_arr[] = "GET / HTTP/1.1\r\nUser-Agent: 441UserAgent/1.0.0\r\n\r\n";
+                    // char new_arr[] = "GET / HTTP/1.1\r\nUser-Agent: 441UserAgent/1.0.0\r\n\r\n";
 
-                    for (int i = 0; i < strlen(new_arr); ++i)
-                    {
-                        printf("%d,", new_arr[i]);
-                    }
-                    printf("\n");
+                    // for (int i = 0; i < strlen(new_arr); ++i)
+                    // {
+                    //     printf("%d,", new_arr[i]);
+                    // }
+                    // printf("\n");
 
-                    Request *request = parse(new_arr, strlen(new_arr), sd);
+                    // Request *request = parse(new_arr, strlen(new_arr), sd);
 
-                    // Request *request = parse(buf, strlen(buf), sd);
+                    Request *request = parse(buf, strlen(buf), sd);
 
                     printf("result of request is %p\n", request);
 
