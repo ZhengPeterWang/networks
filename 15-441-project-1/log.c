@@ -72,7 +72,7 @@ int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int
 
     printf("in strftime\n");
 
-    sprintf(first_buf, "%s - %s [ %s ] \"%s\" %d %d\n", ip_buf, usr, new_time, request, req_num, size);
+    sprintf(first_buf, "%s - %s [%s] \"%s\" %d %d\n", ip_buf, usr, new_time, request, req_num, size);
 
     printf("after strftime\n");
 
