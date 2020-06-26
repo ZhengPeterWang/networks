@@ -1,0 +1,27 @@
+Lex Yacc Starter Package
+------------------------
+This folder contains following files:
+
+1) lexer.l: Lexer (Lexical analyzer) for HTTP grammar. This file
+   contains the code to generate all the tokens that you will need.
+
+2) parser.y: HTTP Parser. This is the file that you want to
+   modify. Currently, it does contain some helpful rules. But, as in
+   its current state, it can not parse HTTP packets. You will write
+   the grammar for that. The main() function in this file opens a file
+   passed to it on command line and tries to parse it according to the
+   rules of grammar. Once your parser is ready, you won't need that
+   main() function anymore. Instead, you will invoke yyparse() from
+   your code. Please take a moment to see what main() function is
+   doing.
+
+3) http-request.txt: This file contains a sample HTTP request. Once
+   you have written your parser, you can use this file to verify that
+   it works correctly. (You will find hexdump command line program
+   useful to see CRLFs in this file).
+
+4) Makefile: Contains rules to compile lex and yacc files. You will
+   need take a moment to think about how you can merge this into your
+   Makefile.
+
+All the best!

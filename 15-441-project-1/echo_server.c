@@ -13,6 +13,7 @@
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,9 +23,12 @@
 #include <errno.h>
 
 #include "parse.h"
+#include "log.h"
+#include "hash_table.h"
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
+#define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
 
 int close_socket(int sock)
@@ -42,16 +46,20 @@ int main(int argc, char *argv[])
     int sock;
     ssize_t readret;
     socklen_t cli_size;
-    struct sockaddr_in addr, cli_addr;
+    struct sockaddr_in addr;
     char buf[BUF_SIZE];
     memset(buf, 0, BUF_SIZE);
 
     fprintf(stdout, "----- Echo Server -----\n");
 
+    Log *log = log_init_default("liso.log");
+
+    Table *table = create_table(TABLE_SIZE);
+
     /* all networked programs must create a socket */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
-        fprintf(stderr, "Failed creating socket.\n");
+        error_log(log, "", "Failed creating socket.\n");
         return EXIT_FAILURE;
     }
 
@@ -63,14 +71,14 @@ int main(int argc, char *argv[])
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
         close_socket(sock);
-        fprintf(stderr, "Failed binding socket.\n");
+        error_log(log, "", "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
 
     if (listen(sock, 5))
     {
         close_socket(sock);
-        fprintf(stderr, "Error listening on socket.\n");
+        error_log(log, "", "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
 
@@ -90,7 +98,7 @@ int main(int argc, char *argv[])
         if (select(max_sd + 1, &newfds, NULL, NULL, NULL) < 0)
         {
             close(sock);
-            fprintf(stderr, "Error select.\n");
+            error_log(log, "", "Error select.\n");
             return EXIT_FAILURE;
         }
 
@@ -103,24 +111,27 @@ int main(int argc, char *argv[])
 
                 if (i == sock)
                 {
+                    struct sockaddr *temp_addr;
+                    temp_addr = (struct sockaddr *)malloc(sizeof(struct sockaddr));
+                    cli_size = sizeof(temp_addr);
 
-                    cli_size = sizeof(cli_addr);
                     int new_socket;
-                    if ((new_socket = accept(sock, (struct sockaddr *)&cli_addr,
+                    if ((new_socket = accept(sock, temp_addr,
                                              &cli_size)) == -1)
                     {
                         close(sock);
-                        fprintf(stderr, "Error accepting connection.\n");
+                        error_log(log, "", "Error accepting connection.\n");
                         return EXIT_FAILURE;
                     }
 
                     FD_SET(new_socket, &readfds);
+
+                    insert_table(table, new_socket, temp_addr);
+
                     if (new_socket > max_sd)
                     {
                         max_sd = new_socket;
                     }
-
-                    printf("New connection , socket fd is %d with port %d\n", new_socket, ntohs(cli_addr.sin_port));
                 }
                 else
                 {
@@ -158,9 +169,14 @@ int main(int argc, char *argv[])
                             {
                                 close_socket(i);
                                 close_socket(sock);
-                                fprintf(stderr, "Error sending to client.\n");
+                                error_log(log, "", "Error sending to client.\n");
                                 return EXIT_FAILURE;
                             }
+
+                            struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, i);
+
+                            access_log(log, inet_ntoa(new_addr->sin_addr), "", res, 400, strlen(res));
+
                             printf("done\n");
                             // parsing failed
                             // send a response of 400
@@ -173,9 +189,13 @@ int main(int argc, char *argv[])
                             {
                                 close_socket(i);
                                 close_socket(sock);
-                                fprintf(stderr, "Error sending to client.\n");
+                                error_log(log, "", "Error sending to client.\n");
                                 return EXIT_FAILURE;
                             }
+
+                            struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, i);
+
+                            access_log(log, inet_ntoa(new_addr->sin_addr), "", buf, 200, strlen(buf));
                         }
                         printf("reaching end\n");
                         memset(buf, 0, BUF_SIZE);
@@ -186,7 +206,7 @@ int main(int argc, char *argv[])
                     {
                         close_socket(i);
                         close_socket(sock);
-                        fprintf(stderr, "Error reading from client socket.\n");
+                        error_log(log, "", "Error reading from client socket.\n");
                         return EXIT_FAILURE;
                     }
                     if (readret == 0)
@@ -194,7 +214,7 @@ int main(int argc, char *argv[])
                         if (close_socket(i))
                         {
                             close_socket(sock);
-                            fprintf(stderr, "Error closing client socket.\n");
+                            error_log(log, "", "Error closing client socket.\n");
                             return EXIT_FAILURE;
                         }
                         FD_CLR(i, &readfds);
