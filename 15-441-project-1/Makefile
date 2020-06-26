@@ -24,4 +24,4 @@ echo_client:
 	$(CC) echo_client.c -o echo_client -Wall -Werror
 
 clean:
-	rm -f *~ *.o example lex.yy.c y.tab.c y.tab.h echo_server echo_client
+	rm -f *~ *.o *.log example lex.yy.c y.tab.c y.tab.h echo_server echo_client
