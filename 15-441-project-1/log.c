@@ -1,5 +1,5 @@
 #include <log.h>
-#define SIZE 256
+#define SIZE 1024
 
 Log *log_init_default(const char *file)
 {
@@ -56,7 +56,9 @@ int error_log(Log *log, char *ip_buf, const char *err_msg)
 
 int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int req_num, int size)
 {
-    char *first_buf;
+    printf("in access log\n");
+
+    char *first_buf = (char *)malloc(SIZE);
 
     time_t t = time(NULL);
 
@@ -64,9 +66,15 @@ int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int
 
     char *new_time = (char *)malloc(SIZE);
 
+    printf("before strftime\n");
+
     strftime(new_time, SIZE, "%d/%b/%Y:%H:%M:%S %z", tt);
 
-    sprintf(first_buf, "%s - %s [%s] \"%s\" %d %d\n", ip_buf, usr, new_time, request, req_num, size);
+    printf("in strftime\n");
+
+    sprintf(first_buf, "%s - %s [ %s ] \"%s\" %d %d\n", ip_buf, usr, new_time, request, req_num, size);
+
+    printf("after strftime\n");
 
     int err_num;
     if ((err_num = write_log(log, first_buf)) != SUCCESS)
@@ -86,7 +94,7 @@ int write_log(Log *log, const char *buf)
         return LOG_FAILURE;
     }
     int err_num;
-    if ((err_num = fputs(buf, file)) != 0)
+    if ((err_num = fputs(buf, file)) == 0)
     {
         fprintf(stderr, "Error writing to file with error number %d.\n", err_num);
         return LOG_FAILURE;

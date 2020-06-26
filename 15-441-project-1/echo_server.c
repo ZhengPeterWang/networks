@@ -173,7 +173,11 @@ int main(int argc, char *argv[])
                                 return EXIT_FAILURE;
                             }
 
+                            printf("reached checkpoint 1\n");
+
                             struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, i);
+
+                            printf("reached here\n");
 
                             access_log(log, inet_ntoa(new_addr->sin_addr), "", res, 400, strlen(res));
 
