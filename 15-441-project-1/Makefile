@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-I.
+CFLAGS=-I. -g
 DEPS = parse.h y.tab.h
 OBJ = y.tab.o lex.yy.o parse.o echo_server.o
 FLAGS = -g -Wall

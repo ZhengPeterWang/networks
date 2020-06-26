@@ -150,7 +150,7 @@ token allowed_char_for_token {
  */
 
 allowed_char_for_text:
-allowed_char_for_token; |
+allowed_char_for_token |
 t_separators {
 	$$ = $1;
 } |
@@ -216,7 +216,7 @@ request_header: token ows t_colon ows text ows t_crlf {
 request_headers: {
 	YPRINTF("request headers: match rule 1\n");
 }
-| request_header request_headers {
+| request_headers request_header {
 	YPRINTF("request headers: match rule 2\n");
 };
 
@@ -237,6 +237,14 @@ void set_parsing_options(char *buf, size_t siz, Request *request)
 	parsing_offset = 0;
 	parsing_buf_siz = siz;
     parsing_request = request;
+	printf("parse:\n");
+	for (int i = 0; i < siz; ++i){
+		printf("%d,", parsing_buf[i]);
+	}
+	printf("\n");
 }
 
-void yyerror (char *s) {fprintf (stderr, "%s\n", s);}
+void yyerror (char *s) {
+	fprintf (stderr, "%s\n", s);
+	
+}

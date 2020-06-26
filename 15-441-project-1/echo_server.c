@@ -39,7 +39,7 @@ int close_socket(int sock)
 
 int main(int argc, char *argv[])
 {
-    int sock, client_sock[MAX_CLIENT];
+    int sock;
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr, cli_addr;
@@ -74,150 +74,146 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    for (int i = 0; i < MAX_CLIENT; ++i)
-    {
-        client_sock[i] = 0;
-    }
-
     fd_set readfds;
+    int max_sd = sock;
+
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
 
     /* finally, loop waiting for input and then write it back */
     while (1)
     {
-        FD_ZERO(&readfds);
-        FD_SET(sock, &readfds);
+        printf("Potato...%d\n", max_sd);
 
-        int max_sd = sock;
+        fd_set newfds = readfds;
 
-        //add child sockets to set
-        for (int i = 0; i < MAX_CLIENT; i++)
-        {
-            //socket descriptor
-            int sd = client_sock[i];
-
-            //if valid socket descriptor then add to read list
-            if (sd > 0)
-                FD_SET(sd, &readfds);
-
-            //highest file descriptor number, need it for the select function
-            if (sd > max_sd)
-                max_sd = sd;
-        }
-
-        if (select(max_sd + 1, &readfds, NULL, NULL, NULL) < 0)
+        if (select(max_sd + 1, &newfds, NULL, NULL, NULL) < 0)
         {
             close(sock);
             fprintf(stderr, "Error select.\n");
             return EXIT_FAILURE;
         }
-        if (FD_ISSET(sock, &readfds))
+
+        for (int i = 0; i < max_sd + 1; i++)
         {
-            cli_size = sizeof(cli_addr);
-            int new_socket;
-            if ((new_socket = accept(sock, (struct sockaddr *)&cli_addr,
-                                     &cli_size)) == -1)
-            {
-                close(sock);
-                fprintf(stderr, "Error accepting connection.\n");
-                return EXIT_FAILURE;
-            }
-            printf("New connection , socket fd is %d with port %d\n", new_socket, ntohs(cli_addr.sin_port));
 
-            for (int i = 0; i < MAX_CLIENT; i++)
+            if (FD_ISSET(i, &newfds))
             {
-                if (client_sock[i] == 0)
+                printf("We got one %d\n", i);
+
+                if (i == sock)
                 {
-                    client_sock[i] = new_socket;
-                    break;
-                }
-            }
-        }
 
-        for (int i = 0; i < MAX_CLIENT; i++)
-        {
-            int sd = client_sock[i];
-
-            readret = 0;
-
-            if (FD_ISSET(sd, &readfds))
-            {
-                printf("Potato*******************************\n");
-                while ((readret = recv(sd, buf, BUF_SIZE, 0)) >= 1)
-                {
-                    printf("Start parsing... \n");
-
-                    // char new_arr[] = "GET / HTTP/1.1\r\nUser-Agent: 441UserAgent/1.0.0\r\n\r\n";
-
-                    // for (int i = 0; i < strlen(new_arr); ++i)
-                    // {
-                    //     printf("%d,", new_arr[i]);
-                    // }
-                    // printf("\n");
-
-                    // Request *request = parse(new_arr, strlen(new_arr), sd);
-
-                    Request *request = parse(buf, strlen(buf), sd);
-
-                    printf("result of request is %p\n", request);
-
-                    if (request == NULL)
+                    cli_size = sizeof(cli_addr);
+                    int new_socket;
+                    if ((new_socket = accept(sock, (struct sockaddr *)&cli_addr,
+                                             &cli_size)) == -1)
                     {
-                        printf("Buffer:");
-                        for (int i = 0; i < BUF_SIZE; ++i)
-                        {
-                            printf("%d,", buf[i]);
-                        }
-                        printf("\n");
-
-                        char res[] = "HTTP/1.1 400 Bad Request\r\n";
-                        printf("processing request\n");
-                        if (send(sd, res, readret, 0) != readret)
-                        {
-                            close_socket(sd);
-                            close_socket(sock);
-                            fprintf(stderr, "Error sending to client.\n");
-                            return EXIT_FAILURE;
-                        }
-                        printf("done\n");
-                        // parsing failed
-                        // send a response of 400
+                        close(sock);
+                        fprintf(stderr, "Error accepting connection.\n");
+                        return EXIT_FAILURE;
                     }
 
-                    else
+                    FD_SET(new_socket, &readfds);
+                    if (new_socket > max_sd)
                     {
-                        printf("Parsing succeeded!\n");
-                        if (send(sd, buf, readret, 0) != readret)
-                        {
-                            close_socket(sd);
-                            close_socket(sock);
-                            fprintf(stderr, "Error sending to client.\n");
-                            return EXIT_FAILURE;
-                        }
+                        max_sd = new_socket;
                     }
-                    printf("reaching end\n");
-                    memset(buf, 0, BUF_SIZE);
-                    if (readret < BUF_SIZE)
-                        break;
-                }
 
-                if (readret == -1)
-                {
-                    close_socket(sd);
-                    close_socket(sock);
-                    fprintf(stderr, "Error reading from client socket.\n");
-                    return EXIT_FAILURE;
-                }
-                printf("Closing client %d's socket\n", sd);
-                if (close_socket(sd))
-                {
-                    close_socket(sock);
-                    fprintf(stderr, "Error closing client socket.\n");
-                    return EXIT_FAILURE;
+                    printf("New connection , socket fd is %d with port %d\n", new_socket, ntohs(cli_addr.sin_port));
                 }
                 else
                 {
-                    client_sock[i] = 0;
+                    printf("Potato*******************************\n");
+                    while ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
+                    {
+                        printf("Start parsing... \n");
+
+                        // char new_arr[] = "GET / HTTP/1.1\r\nUser-Agent: 441UserAgent/1.0.0\r\n\r\n";
+
+                        // for (int i = 0; i < strlen(new_arr); ++i)
+                        // {
+                        //     printf("%d,", new_arr[i]);
+                        // }
+                        // printf("\n");
+
+                        // Request *request = parse(new_arr, strlen(new_arr), sd);
+
+                        Request *request = parse(buf, strlen(buf), i);
+
+                        printf("result of request is %p\n", request);
+
+                        if (request == NULL)
+                        {
+                            printf("Buffer:");
+                            for (int i = 0; i < BUF_SIZE; ++i)
+                            {
+                                printf("%d,", buf[i]);
+                            }
+                            printf("\n");
+
+                            char res[] = "HTTP/1.1 400 Bad Request\r\n";
+                            printf("processing request\n");
+                            if (send(i, res, strlen(res), 0) != strlen(res))
+                            {
+                                close_socket(i);
+                                close_socket(sock);
+                                fprintf(stderr, "Error sending to client.\n");
+                                return EXIT_FAILURE;
+                            }
+                            printf("done\n");
+                            // parsing failed
+                            // send a response of 400
+                        }
+
+                        else
+                        {
+                            printf("Parsing succeeded!\n");
+                            if (send(i, buf, readret, 0) != readret)
+                            {
+                                close_socket(i);
+                                close_socket(sock);
+                                fprintf(stderr, "Error sending to client.\n");
+                                return EXIT_FAILURE;
+                            }
+                        }
+                        printf("reaching end\n");
+                        memset(buf, 0, BUF_SIZE);
+                        if (readret < BUF_SIZE)
+                            break;
+                    }
+                    if (readret == -1)
+                    {
+                        close_socket(i);
+                        close_socket(sock);
+                        fprintf(stderr, "Error reading from client socket.\n");
+                        return EXIT_FAILURE;
+                    }
+                    if (readret == 0)
+                    {
+                        if (close_socket(i))
+                        {
+                            close_socket(sock);
+                            fprintf(stderr, "Error closing client socket.\n");
+                            return EXIT_FAILURE;
+                        }
+                        FD_CLR(i, &readfds);
+
+                        fprintf(stderr, "Socket reaching end %d.\n", i);
+                    }
                 }
+
+                // printf("Closing client %d's socket\n", sd);
+                // if (close_socket(sd))
+                // {
+                //     close_socket(sock);
+                //     fprintf(stderr, "Error closing client socket.\n");
+                //     return EXIT_FAILURE;
+                // }
+                // else
+                // {
+                //     client_sock[i] = 0;
+                // }
             }
         }
     }

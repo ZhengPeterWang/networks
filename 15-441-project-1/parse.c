@@ -1,6 +1,8 @@
+#include <unistd.h>
 #include "parse.h"
 
 extern int yyparse();
+extern void yyrestart(FILE *);
 extern void set_parsing_options(char *, size_t, Request *);
 
 /**
@@ -63,10 +65,10 @@ Request *parse(char *buffer, int size, int socketFd)
 		request->header_count = 0;
 		//TODO You will need to handle resizing this in parser.y
 		request->headers = (Request_header *)malloc(sizeof(Request_header) * 1);
+
 		set_parsing_options(buf, i, request);
 
-		sleep(20);
-
+		yyrestart(NULL);
 		if (yyparse() == SUCCESS)
 		{
 			printf("Parsing succeeded!\n");

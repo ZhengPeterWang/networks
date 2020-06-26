@@ -1,408 +1,271 @@
-/************tcpserver.c************************/
+/*******select.c*********/
 
-/* header files needed to use the sockets API */
-
-/*File contain Macro, Data Type and Structure etc */
-
-/***********************************************/
+/*******Using select() for I/O multiplexing */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <errno.h>
-#include <unistd.h>
+#include <arpa/inet.h>
 
-/* BufferLength is 100 bytes */
+/* port we're listening on */
 
-#define BufferLength 100
+#define PORT 2020
 
-/* Server port number */
-
-#define SERVPORT 3111
-
-int main()
+int main(int argc, char *argv[])
 
 {
 
-    /* Variable and structure definitions. */
+    /* master file descriptor list */
 
-    int sd, sd2, rc, length = sizeof(int);
+    fd_set master;
 
-    int totalcnt = 0, on = 1;
+    /* temp file descriptor list for select() */
 
-    char temp;
+    fd_set read_fds;
 
-    char buffer[BufferLength];
+    /* server address */
 
     struct sockaddr_in serveraddr;
 
-    struct sockaddr_in their_addr;
+    /* client address */
 
-    fd_set read_fd;
+    struct sockaddr_in clientaddr;
 
-    struct timeval timeout;
+    /* maximum file descriptor number */
 
-    timeout.tv_sec = 15;
+    int fdmax;
 
-    timeout.tv_usec = 0;
+    /* listening socket descriptor */
 
-    /* The socket() function returns a socket descriptor */
+    int listener;
 
-    /* representing an endpoint. The statement also */
+    /* newly accept()ed socket descriptor */
 
-    /* identifies that the INET (Internet Protocol) */
+    int newfd;
 
-    /* address family with the TCP transport (SOCK_STREAM) */
+    /* buffer for client data */
 
-    /* will be used for this socket. */
+    char buf[1024];
 
-    /************************************************/
+    int nbytes;
 
-    /* Get a socket descriptor */
+    /* for setsockopt() SO_REUSEADDR, below */
 
-    if ((sd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    int yes = 1;
 
-    {
+    int addrlen;
 
-        perror("Server-socket() error");
+    int i, j;
 
-        /* Just exit */
+    /* clear the master and temp sets */
 
-        exit(-1);
-    }
+    FD_ZERO(&master);
 
-    else
+    FD_ZERO(&read_fds);
 
-        printf("Server-socket() is OK\n");
+    /* get the listener */
 
-    /* The setsockopt() function is used to allow */
-
-    /* the local address to be reused when the server */
-
-    /* is restarted before the required wait time */
-
-    /* expires. */
-
-    /***********************************************/
-
-    /* Allow socket descriptor to be reusable */
-
-    if ((rc = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, (char *)&on, sizeof(on))) < 0)
+    if ((listener = socket(AF_INET, SOCK_STREAM, 0)) == -1)
 
     {
 
-        perror("Server-setsockopt() error");
+        perror("Server-socket() error lol!");
 
-        close(sd);
+        /*just exit lol!*/
 
-        exit(-1);
+        exit(1);
     }
 
-    else
+    printf("Server-socket() is OK...\n");
 
-        printf("Server-setsockopt() is OK\n");
+    /*"address already in use" error message */
 
-    /* bind to an address */
+    if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
 
-    memset(&serveraddr, 0x00, sizeof(struct sockaddr_in));
+    {
+
+        perror("Server-setsockopt() error lol!");
+
+        exit(1);
+    }
+
+    printf("Server-setsockopt() is OK...\n");
+
+    /* bind */
 
     serveraddr.sin_family = AF_INET;
 
-    serveraddr.sin_port = htons(SERVPORT);
+    serveraddr.sin_addr.s_addr = INADDR_ANY;
 
-    serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serveraddr.sin_port = htons(PORT);
 
-    printf("Using %s, listening at %d\n", inet_ntoa(serveraddr.sin_addr), SERVPORT);
+    memset(&(serveraddr.sin_zero), '\0', 8);
 
-    /* After the socket descriptor is created, a bind() */
-
-    /* function gets a unique name for the socket. */
-
-    /* In this example, the user sets the */
-
-    /* s_addr to zero, which allows the system to */
-
-    /* connect to any client that used port 3005. */
-
-    if ((rc = bind(sd, (struct sockaddr *)&serveraddr, sizeof(serveraddr))) < 0)
+    if (bind(listener, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) == -1)
 
     {
 
-        perror("Server-bind() error");
+        perror("Server-bind() error lol!");
 
-        /* Close the socket descriptor */
-
-        close(sd);
-
-        /* and just exit */
-
-        exit(-1);
+        exit(1);
     }
 
-    else
+    printf("Server-bind() is OK...\n");
 
-        printf("Server-bind() is OK\n");
+    /* listen */
 
-    /* The listen() function allows the server to accept */
-
-    /* incoming client connections. In this example, */
-
-    /* the backlog is set to 10. This means that the */
-
-    /* system can queue up to 10 connection requests before */
-
-    /* the system starts rejecting incoming requests.*/
-
-    /*************************************************/
-
-    /* Up to 10 clients can be queued */
-
-    if ((rc = listen(sd, 10)) < 0)
+    if (listen(listener, 10) == -1)
 
     {
 
-        perror("Server-listen() error");
+        perror("Server-listen() error lol!");
 
-        close(sd);
-
-        exit(-1);
+        exit(1);
     }
 
-    else
+    printf("Server-listen() is OK...\n");
 
-        printf("Server-Ready for client connection...\n");
+    /* add the listener to the master set */
 
-    /* The server will accept a connection request */
+    FD_SET(listener, &master);
 
-    /* with this accept() function, provided the */
+    /* keep track of the biggest file descriptor */
 
-    /* connection request does the following: */
+    fdmax = listener; /* so far, it's this one*/
 
-    /* - Is part of the same address family */
+    /* loop */
 
-    /* - Uses streams sockets (TCP) */
-
-    /* - Attempts to connect to the specified port */
-
-    /***********************************************/
-
-    /* accept() the incoming connection request. */
-
-    int sin_size = sizeof(struct sockaddr_in);
-
-    if ((sd2 = accept(sd, (struct sockaddr *)&their_addr, &sin_size)) < 0)
+    for (;;)
 
     {
 
-        perror("Server-accept() error");
+        /* copy it */
 
-        close(sd);
+        read_fds = master;
 
-        exit(-1);
-    }
-
-    else
-
-        printf("Server-accept() is OK\n");
-
-    /*client IP*/
-
-    printf("Server-new socket, sd2 is OK...\n");
-
-    printf("Got connection from the f***ing client: %s\n", inet_ntoa(their_addr.sin_addr));
-
-    /* The select() function allows the process to */
-
-    /* wait for an event to occur and to wake up */
-
-    /* the process when the event occurs. In this */
-
-    /* example, the system notifies the process */
-
-    /* only when data is available to read. */
-
-    /***********************************************/
-
-    /* Wait for up to 15 seconds on */
-
-    /* select() for data to be read. */
-
-    FD_ZERO(&read_fd);
-
-    FD_SET(sd2, &read_fd);
-
-    rc = select(sd2 + 1, &read_fd, NULL, NULL, &timeout);
-
-    if ((rc == 1) && (FD_ISSET(sd2, &read_fd)))
-
-    {
-
-        /* Read data from the client. */
-
-        totalcnt = 0;
-
-        while (totalcnt < BufferLength)
+        if (select(fdmax + 1, &read_fds, NULL, NULL, NULL) == -1)
 
         {
 
-            /* When select() indicates that there is data */
+            perror("Server-select() error lol!");
 
-            /* available, use the read() function to read */
-
-            /* 100 bytes of the string that the */
-
-            /* client sent. */
-
-            /***********************************************/
-
-            /* read() from client */
-
-            rc = read(sd2, &buffer[totalcnt], (BufferLength - totalcnt));
-
-            if (rc < 0)
-
-            {
-
-                perror("Server-read() error");
-
-                close(sd);
-
-                close(sd2);
-
-                exit(-1);
-            }
-
-            else if (rc == 0)
-
-            {
-
-                printf("Client program has issued a close()\n");
-
-                close(sd);
-
-                close(sd2);
-
-                exit(-1);
-            }
-
-            else
-
-            {
-
-                totalcnt += rc;
-
-                printf("Server-read() is OK\n");
-            }
+            exit(1);
         }
-    }
 
-    else if (rc < 0)
+        printf("Server-select() is OK...\n");
 
-    {
+        /*run through the existing connections looking for data to be read*/
 
-        perror("Server-select() error");
-
-        close(sd);
-
-        close(sd2);
-
-        exit(-1);
-    }
-
-    /* rc == 0 */
-
-    else
-
-    {
-
-        printf("Server-select() timed out.\n");
-
-        close(sd);
-
-        close(sd2);
-
-        exit(-1);
-    }
-
-    /* Shows the data */
-
-    printf("Received data from the f***ing client: %s\n", buffer);
-
-    /* Echo some bytes of string, back */
-
-    /* to the client by using the write() */
-
-    /* function. */
-
-    /************************************/
-
-    /* write() some bytes of string, */
-
-    /* back to the client. */
-
-    printf("Server-Echoing back to client...\n");
-
-    rc = write(sd2, buffer, totalcnt);
-
-    if (rc != totalcnt)
-
-    {
-
-        perror("Server-write() error");
-
-        /* Get the error number. */
-
-        rc = getsockopt(sd2, SOL_SOCKET, SO_ERROR, &temp, &length);
-
-        if (rc == 0)
+        for (i = 0; i <= fdmax; i++)
 
         {
 
-            /* Print out the asynchronously */
+            if (FD_ISSET(i, &read_fds))
 
-            /* received error. */
+            { /* we got one... */
 
-            errno = temp;
+                if (i == listener)
 
-            perror("SO_ERROR was: ");
+                {
+
+                    /* handle new connections */
+
+                    addrlen = sizeof(clientaddr);
+
+                    if ((newfd = accept(listener, (struct sockaddr *)&clientaddr, &addrlen)) == -1)
+
+                    {
+
+                        perror("Server-accept() error lol!");
+                    }
+
+                    else
+
+                    {
+
+                        printf("Server-accept() is OK...\n");
+
+                        FD_SET(newfd, &master); /* add to master set */
+
+                        if (newfd > fdmax)
+
+                        { /* keep track of the maximum */
+
+                            fdmax = newfd;
+                        }
+
+                        printf("%s: New connection from %s on socket %d\n", argv[0], inet_ntoa(clientaddr.sin_addr), newfd);
+                    }
+                }
+
+                else
+
+                {
+
+                    /* handle data from a client */
+
+                    if ((nbytes = recv(i, buf, sizeof(buf), 0)) <= 0)
+
+                    {
+
+                        /* got error or connection closed by client */
+
+                        if (nbytes == 0)
+
+                            /* connection closed */
+
+                            printf("%s: socket %d hung up\n", argv[0], i);
+
+                        else
+
+                            perror("recv() error lol!");
+
+                        /* close it... */
+
+                        close(i);
+
+                        /* remove from master set */
+
+                        FD_CLR(i, &master);
+                    }
+
+                    else
+
+                    {
+
+                        /* we got some data from a client*/
+
+                        for (j = 0; j <= fdmax; j++)
+
+                        {
+
+                            /* send to everyone! */
+
+                            if (FD_ISSET(j, &master))
+
+                            {
+
+                                /* except the listener and ourselves */
+
+                                if (j != listener && j != i)
+
+                                {
+
+                                    if (send(j, buf, nbytes, 0) == -1)
+
+                                        perror("send() error lol!");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        else
-
-            printf("Server-write() is OK\n");
-
-        close(sd);
-
-        close(sd2);
-
-        exit(-1);
     }
-
-    /* When the data has been sent, close() */
-
-    /* the socket descriptor that was returned */
-
-    /* from the accept() verb and close() the */
-
-    /* original socket descriptor. */
-
-    /*****************************************/
-
-    /* Close the connection to the client and */
-
-    /* close the server listening socket. */
-
-    /******************************************/
-
-    close(sd2);
-
-    close(sd);
-
-    exit(0);
 
     return 0;
 }
