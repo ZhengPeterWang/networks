@@ -28,7 +28,7 @@
 #include "hash_table.h"
 
 #define ECHO_PORT 9999
-#define BUF_SIZE 4096
+#define BUF_SIZE 8192
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
@@ -140,20 +140,11 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
+
                     printf("Potato*******************************\n");
-                    while ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
+                    if ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
                     {
                         printf("Start parsing... \n");
-
-                        // char new_arr[] = "GET / HTTP/1.1\r\nUser-Agent: 441UserAgent/1.0.0\r\n\r\n";
-
-                        // for (int i = 0; i < strlen(new_arr); ++i)
-                        // {
-                        //     printf("%d,", new_arr[i]);
-                        // }
-                        // printf("\n");
-
-                        // Request *request = parse(new_arr, strlen(new_arr), sd);
 
                         Request *request = parse(buf, strlen(buf), i);
 
@@ -208,8 +199,11 @@ int main(int argc, char *argv[])
                         }
                         printf("reaching end\n");
                         memset(buf, 0, BUF_SIZE);
-                        if (readret < BUF_SIZE)
-                            break;
+                    }
+                    //
+                    if (readret == BUF_SIZE)
+                    {
+                        // TODO read more stuff from body
                     }
                     if (readret == -1)
                     {
@@ -260,14 +254,12 @@ static const char *MONTH_NAMES[] =
     {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-char *Rfc1123_DateTimeNow()
+char *Rfc1123_DateTime(time_t t)
 {
     const int RFC1123_TIME_LEN = 29;
-    time_t t;
     struct tm tm;
     char *buf = malloc(RFC1123_TIME_LEN + 1);
 
-    time(&t);
     gmtime_s(&tm, &t);
 
     strftime(buf, RFC1123_TIME_LEN + 1, "---, %d --- %Y %H:%M:%S GMT", &tm);
@@ -294,7 +286,7 @@ void handle_request(Request *request, Log *log)
         // version not supported. return 505.
     }
 
-    if (strcmp(request->http_method, "GET") == 0)
+    else if (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0)
     {
         // load file from the correct directory
         // pass it into the buffer
@@ -312,9 +304,6 @@ void handle_request(Request *request, Log *log)
         // Content-Length: 14.13
         // Content-Type: 14.17 // MIME
         // Last-Modified: 14.29 // do not do conditional get now.
-    }
-    if (strcmp(request->http_method, "HEAD") == 0)
-    {
         char uri_buf[HEADER_BUF_SIZE];
         uri_buf[0] = '.';
         strncat(uri_buf, request->http_uri, strlen(request->http_uri));
@@ -385,7 +374,7 @@ void handle_request(Request *request, Log *log)
             sz = 0;
 
         header = strcat(header, "Date: ");
-        header = strcat(header, Rfc1123_DateTimeNow());
+        header = strcat(header, Rfc1123_DateTime(time(NULL)));
         header = strcat(header, "\r\n");
         header = strcat(header, "Connection: ");
 
@@ -435,14 +424,38 @@ void handle_request(Request *request, Log *log)
 
             header = strncat(header, "\r\nLast-Modified: ", HEADER_BUF_SIZE);
             struct stat *info = (struct stat *)malloc(sizeof(struct stat));
-            stat(uri_buf, info);
-            time_t last_modified = info->st_mtimespec->tv_sec;
-            header = strncat(header, "", HEADER_BUF_SIZE);
+            if (stat(uri_buf, info) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+            else
+            {
+                time_t last_modified = (info->st_mtimespec).tv_sec;
+                header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
+            }
         }
         // do not send the content, but send the body.
         // this first.
+
+        if (strcmp(request->http_method, "GET") == 0 && code == 200)
+        {
+            // put the stuff into buffer!
+            content = (char *)malloc(sz);
+            fgets(content, sz, file);
+            if (ferror(file))
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (file != NULL)
+            fclose(file);
     }
-    if (strcmp(request->http_method, "POST") == 0)
+    else if (strcmp(request->http_method, "POST") == 0)
+    {
+    }
+    else
     {
     }
     // for all other methods, return 501.
