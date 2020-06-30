@@ -32,6 +32,7 @@
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
+#define _POSIX_C_SOURCE 200112L
 
 int close_socket(int sock)
 {
@@ -41,6 +42,231 @@ int close_socket(int sock)
         return 1;
     }
     return 0;
+}
+
+static const char *DAY_NAMES[] =
+    {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+static const char *MONTH_NAMES[] =
+    {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+char *Rfc1123_DateTime(time_t t)
+{
+    const int RFC1123_TIME_LEN = 29;
+    struct tm * tm;
+    char *buf = malloc(RFC1123_TIME_LEN + 1);
+
+    tm = gmtime(&t);
+
+    strftime(buf, RFC1123_TIME_LEN + 1, "---, %d --- %Y %H:%M:%S GMT", tm);
+    memcpy(buf, DAY_NAMES[tm->tm_wday], 3);
+    memcpy(buf + 8, MONTH_NAMES[tm->tm_mon], 3);
+
+    return buf;
+}
+
+const char *get_filename_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return "";
+    return dot + 1;
+}
+
+void handle_request(Request *request, Log *log)
+{
+    printf("Parsing succeeded!\n");
+
+    int code;
+    char *phrase;
+    char *content;
+    char *header;
+
+    // check version. if not http 1.1, return 505. 10.5.6
+    if (strcmp(request->http_version, "HTTP/1.1"))
+    {
+        code = 505;
+        phrase = "HTTP Version Not Supported";
+        // version not supported. return 505.
+    }
+
+    else if (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0)
+    {
+        // load file from the correct directory
+        // pass it into the buffer
+        // if it is a folder, or a root, try to open index.html.
+        // if retrieved, return 200 OK.
+        // if not found, return 404 Not Found.
+        // if met system call errors, return 500 Internal Server Error.
+
+        // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
+        // (header CRLF)* CRLF body
+        // header implements Connection and Date (strftime()). 14.10  14.18
+        // connection: close close.
+        // date assign one while caching if not exist in request
+        // implement Server ('Liso/1.0') 14.38
+        // Content-Length: 14.13
+        // Content-Type: 14.17 // MIME
+        // Last-Modified: 14.29 // do not do conditional get now.
+        char uri_buf[HEADER_BUF_SIZE];
+        uri_buf[0] = '.';
+        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
+        FILE *file = fopen(uri_buf, "r");
+
+        if (file == NULL)
+        {
+            if (uri_buf[strlen(uri_buf) - 1] != '/')
+            {
+                code = 404;
+                phrase = "Not Found";
+                // return 404
+            }
+            else
+            {
+                strncat(uri_buf, "index.html", strlen(request->http_uri));
+                file = fopen(uri_buf, "r");
+                if (file == NULL)
+                {
+                    code = 404;
+                    phrase = "Not Found";
+                    // return 404
+                }
+                else
+                {
+                    code = 200;
+                    phrase = "OK";
+                    // return 200
+                }
+            }
+        }
+        else
+        {
+            code = 200;
+            phrase = "OK";
+        }
+        // return 200
+
+        // get the size of the file
+        int sz = 0;
+        if (code == 200)
+        {
+            // start to process the request!
+            if (fseek(file, 0L, SEEK_END) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            sz = ftell(file);
+            if (sz == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            if (fseek(file, 0L, SEEK_SET) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code != 200)
+            sz = 0;
+
+        header =  "Date: ";
+        header = strcat(header, Rfc1123_DateTime(time(NULL)));
+        header = strcat(header, "\r\n");
+        header = strcat(header, "Connection: ");
+
+        Request_header *tmp = request->headers;
+        for(int i = 0; i < request->header_count; i++){
+            Request_header rh = *tmp;
+            if(strcmp(rh.header_name, "Connection") == 0){
+                header = strcat(header, rh.header_value);
+            }
+        }
+
+        header = strcat(header, "\r\n");
+        header = strcat(header, "Server: Liso/1.0\r\n");
+        header = strcat(header, "Content-Length: ");
+        char *len = (char *)malloc(20);
+        *len = sprintf(len, "%d", sz);;
+        header = strcat(header, len);
+        if (code == 200)
+        {
+            int pass = 0;
+            char * contentheader = strcat(header, "\r\nContent-Type: ");
+            // MIME types
+            // text/html text/css image/png image/jpeg image/gif application/pdf
+
+            const char *ext = get_filename_ext(uri_buf);
+
+            if(strcmp(ext, "html") == 0){
+                contentheader = strcat(contentheader, "text/html");
+            }
+            else if(strcmp(ext, "css") == 0){
+                contentheader = strcat(contentheader, "text/css");
+            }
+            else if(strcmp(ext, "png") == 0){
+                contentheader = strcat(contentheader, "image/png");
+            }
+            else if(strcmp(ext, "jpeg") == 0){
+                contentheader = strcat(contentheader, "image/jpeg");
+            }
+            else if(strcmp(ext, "gif") == 0){
+                contentheader = strcat(contentheader, "image/gif");
+            }
+            else if(strcmp(ext, "pdf") == 0){
+                contentheader = strcat(contentheader, "application/pdf");
+            }
+            else{
+                pass = 1;
+            }
+            
+            if(pass == 0){
+                header = strcat(header, contentheader);
+            }
+
+            header = strcat(header, "\r\nLast-Modified: ");
+            struct stat *info = (struct stat *)malloc(sizeof(struct stat));
+            if (stat(uri_buf, info) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+            else
+            {
+                time_t last_modified = (info->st_mtimespec).tv_sec;
+                header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
+            }
+
+        }
+        // do not send the content, but send the body.
+        // this first.
+
+        if (strcmp(request->http_method, "GET") == 0 && code == 200)
+        {
+            // put the stuff into buffer!
+            content = (char *)malloc(sz);
+            fgets(content, sz, file);
+            if (ferror(file))
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (file != NULL)
+            fclose(file);
+    }
+    else if (strcmp(request->http_method, "POST") == 0)
+    {
+    }
+    else
+    {
+    }
+    // for all other methods, return 501.
 }
 
 int main(int argc, char *argv[])
@@ -248,226 +474,3 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-static const char *DAY_NAMES[] =
-    {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-static const char *MONTH_NAMES[] =
-    {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-char *Rfc1123_DateTime(time_t t)
-{
-    const int RFC1123_TIME_LEN = 29;
-    struct tm tm;
-    char *buf = malloc(RFC1123_TIME_LEN + 1);
-
-    gmtime_s(&tm, &t);
-
-    strftime(buf, RFC1123_TIME_LEN + 1, "---, %d --- %Y %H:%M:%S GMT", &tm);
-    memcpy(buf, DAY_NAMES[tm.tm_wday], 3);
-    memcpy(buf + 8, MONTH_NAMES[tm.tm_mon], 3);
-
-    return buf;
-}
-
-void handle_request(Request *request, Log *log)
-{
-    printf("Parsing succeeded!\n");
-
-    int code;
-    char *phrase;
-    char *content;
-    char *header;
-
-    // check version. if not http 1.1, return 505. 10.5.6
-    if (strcmp(request->http_version, "HTTP/1.1"))
-    {
-        code = 505;
-        phrase = "HTTP Version Not Supported";
-        // version not supported. return 505.
-    }
-
-    else if (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0)
-    {
-        // load file from the correct directory
-        // pass it into the buffer
-        // if it is a folder, or a root, try to open index.html.
-        // if retrieved, return 200 OK.
-        // if not found, return 404 Not Found.
-        // if met system call errors, return 500 Internal Server Error.
-
-        // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
-        // (header CRLF)* CRLF body
-        // header implements Connection and Date (strftime()). 14.10  14.18
-        // connection: close close.
-        // date assign one while caching if not exist in request
-        // implement Server ('Liso/1.0') 14.38
-        // Content-Length: 14.13
-        // Content-Type: 14.17 // MIME
-        // Last-Modified: 14.29 // do not do conditional get now.
-        char uri_buf[HEADER_BUF_SIZE];
-        uri_buf[0] = '.';
-        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
-        FILE *file = fopen(uri_buf, "r");
-
-        if (file == NULL)
-        {
-            if (uri_buf[strlen(uri_buf) - 1] != '/')
-            {
-                code = 404;
-                phrase = "Not Found";
-                // return 404
-            }
-            else
-            {
-                strncat(uri_buf, "index.html", strlen(request->http_uri));
-                file = fopen(uri_buf, "r");
-                if (file == NULL)
-                {
-                    code = 404;
-                    phrase = "Not Found";
-                    // return 404
-                }
-                else
-                {
-                    code = 200;
-                    phrase = "OK";
-                    // return 200
-                }
-            }
-        }
-        else
-        {
-            code = 200;
-            phrase = "OK";
-        }
-        // return 200
-
-        // get the size of the file
-        int sz = 0;
-        if (code == 200)
-        {
-            // start to process the request!
-            if (fseek(file, 0L, SEEK_END) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (code == 200)
-        {
-            sz = ftell(file);
-            if (sz == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (code == 200)
-        {
-            if (fseek(file, 0L, SEEK_SET) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (code != 200)
-            sz = 0;
-
-        header = strcat(header, "Date: ");
-        header = strcat(header, Rfc1123_DateTime(time(NULL)));
-        header = strcat(header, "\r\n");
-        header = strcat(header, "Connection: ");
-
-        Request_header *tmp = request->headers;
-        for(int i = 0; i < request->header_count; i++){
-            Request_header rh = *tmp;
-            if(strcmp(rh.header_name, "Connection") == 0){
-                header = strcat(header, rh.header_value);
-            }
-        }
-
-        header = strcat(header, "\r\n");
-        header = strcat(header, "Server: Liso/1.0\r\n");
-        header = strcat(header, "Content-Length: ");
-        char *len = itoa(sz);
-        header = strcat(header, len);
-        if (code == 200)
-        {
-            int pass = 0;
-            char * contentheader = strcat(header, "\r\nContent-Type: ");
-            // MIME types
-            // text/html text/css image/png image/jpeg image/gif application/pdf
-
-            char *ext = get_filename_ext(uri_buf);
-
-            if(strcmp(ext, "html") == 0){
-                contentheader = strcat(contentheader, "text/html");
-            }
-            else if(strcmp(ext, "css") == 0){
-                contentheader = strcat(contentheader, "text/css");
-            }
-            else if(strcmp(ext, "png") == 0){
-                contentheader = strcat(contentheader, "image/png");
-            }
-            else if(strcmp(ext, "jpeg") == 0){
-                contentheader = strcat(contentheader, "image/jpeg");
-            }
-            else if(strcmp(ext, "gif") == 0){
-                contentheader = strcat(contentheader, "image/gif");
-            }
-            else if(strcmp(ext, "pdf") == 0){
-                contentheader = strcat(contentheader, "application/pdf");
-            }
-            else{
-                pass = 1;
-            }
-            
-            if(pass == 0){
-                header = strcat(header, contentheader);
-            }
-
-            header = strncat(header, "\r\nLast-Modified: ", HEADER_BUF_SIZE);
-            struct stat *info = (struct stat *)malloc(sizeof(struct stat));
-            if (stat(uri_buf, info) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-            else
-            {
-                time_t last_modified = (info->st_mtimespec).tv_sec;
-                header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
-            }
-
-        }
-        // do not send the content, but send the body.
-        // this first.
-
-        if (strcmp(request->http_method, "GET") == 0 && code == 200)
-        {
-            // put the stuff into buffer!
-            content = (char *)malloc(sz);
-            fgets(content, sz, file);
-            if (ferror(file))
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (file != NULL)
-            fclose(file);
-    }
-    else if (strcmp(request->http_method, "POST") == 0)
-    {
-    }
-    else
-    {
-    }
-    // for all other methods, return 501.
-}
-
-const char *get_filename_ext(const char *filename) {
-    const char *dot = strrchr(filename, '.');
-    if(!dot || dot == filename) return "";
-    return dot + 1;
-}
