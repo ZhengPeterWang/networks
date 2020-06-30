@@ -388,7 +388,15 @@ void handle_request(Request *request, Log *log)
         header = strcat(header, Rfc1123_DateTimeNow());
         header = strcat(header, "\r\n");
         header = strcat(header, "Connection: ");
-        // TODO close connection when (1) user requests to close (2) this is the last buffer
+
+        Request_header *tmp = request->headers;
+        for(int i = 0; i < request->header_count; i++){
+            Request_header rh = *tmp;
+            if(strcmp(rh.header_name, "Connection") == 0){
+                header = strcat(header, rh.header_value);
+            }
+        }
+
         header = strcat(header, "\r\n");
         header = strcat(header, "Server: Liso/1.0\r\n");
         header = strcat(header, "Content-Length: ");
@@ -399,6 +407,32 @@ void handle_request(Request *request, Log *log)
             header = strncat(header, "\r\nContent-Type: ", HEADER_BUF_SIZE);
             // MIME types
             // text/html text/css image/png image/jpeg image/gif application/pdf
+
+            char *ext = get_filename_ext(uri_buf);
+
+            if(strcmp(ext, "html") == 0){
+                header = strcat(header, "text/html");
+            }
+            else if(strcmp(ext, "css") == 0){
+                header = strcat(header, "text/css");
+            }
+            else if(strcmp(ext, "png") == 0){
+                header = strcat(header, "image/png");
+            }
+            else if(strcmp(ext, "jpeg") == 0){
+                header = strcat(header, "image/jpeg");
+            }
+            else if(strcmp(ext, "gif") == 0){
+                header = strcat(header, "image/gif");
+            }
+            else if(strcmp(ext, "pdf") == 0){
+                header = strcat(header, "application/pdf");
+            }
+            else{
+
+            }
+            
+
             header = strncat(header, "\r\nLast-Modified: ", HEADER_BUF_SIZE);
             struct stat *info = (struct stat *)malloc(sizeof(struct stat));
             stat(uri_buf, info);
@@ -412,4 +446,10 @@ void handle_request(Request *request, Log *log)
     {
     }
     // for all other methods, return 501.
+}
+
+const char *get_filename_ext(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename) return "";
+    return dot + 1;
 }
