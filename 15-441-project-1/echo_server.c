@@ -65,13 +65,15 @@ char *Rfc1123_DateTime(time_t t)
     return buf;
 }
 
-const char *get_filename_ext(const char *filename) {
+const char *get_filename_ext(const char *filename)
+{
     const char *dot = strrchr(filename, '.');
-    if(!dot || dot == filename) return "";
+    if (!dot || dot == filename)
+        return "";
     return dot + 1;
 }
 
-void handle_request(Request *request, Log *log)
+char *handle_request(Request *request, Log *log)
 {
     printf("Parsing succeeded!\n");
 
@@ -181,9 +183,11 @@ void handle_request(Request *request, Log *log)
         header = strcat(header, "Connection: ");
 
         Request_header *tmp = request->headers;
-        for(int i = 0; i < request->header_count; i++){
+        for (int i = 0; i < request->header_count; i++)
+        {
             Request_header rh = *tmp;
-            if(strcmp(rh.header_name, "Connection") == 0){
+            if (strcmp(rh.header_name, "Connection") == 0)
+            {
                 header = strcat(header, rh.header_value);
             }
         }
@@ -197,35 +201,43 @@ void handle_request(Request *request, Log *log)
         if (code == 200)
         {
             int pass = 0;
-            char * contentheader = strcat(header, "\r\nContent-Type: ");
+            char *contentheader = strcat(header, "\r\nContent-Type: ");
             // MIME types
             // text/html text/css image/png image/jpeg image/gif application/pdf
 
             const char *ext = get_filename_ext(uri_buf);
 
-            if(strcmp(ext, "html") == 0){
+            if (strcmp(ext, "html") == 0)
+            {
                 contentheader = strcat(contentheader, "text/html");
             }
-            else if(strcmp(ext, "css") == 0){
+            else if (strcmp(ext, "css") == 0)
+            {
                 contentheader = strcat(contentheader, "text/css");
             }
-            else if(strcmp(ext, "png") == 0){
+            else if (strcmp(ext, "png") == 0)
+            {
                 contentheader = strcat(contentheader, "image/png");
             }
-            else if(strcmp(ext, "jpeg") == 0){
+            else if (strcmp(ext, "jpeg") == 0)
+            {
                 contentheader = strcat(contentheader, "image/jpeg");
             }
-            else if(strcmp(ext, "gif") == 0){
+            else if (strcmp(ext, "gif") == 0)
+            {
                 contentheader = strcat(contentheader, "image/gif");
             }
-            else if(strcmp(ext, "pdf") == 0){
+            else if (strcmp(ext, "pdf") == 0)
+            {
                 contentheader = strcat(contentheader, "application/pdf");
             }
-            else{
+            else
+            {
                 pass = 1;
             }
-            
-            if(pass == 0){
+
+            if (pass == 0)
+            {
                 header = strcat(header, contentheader);
             }
 
@@ -241,7 +253,6 @@ void handle_request(Request *request, Log *log)
                 time_t last_modified = (info->st_mtimespec).tv_sec;
                 header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
             }
-
         }
         // do not send the content, but send the body.
         // this first.
@@ -267,6 +278,8 @@ void handle_request(Request *request, Log *log)
     {
     }
     // for all other methods, return 501.
+
+    // return header vs contents
 }
 
 int main(int argc, char *argv[])
@@ -366,13 +379,17 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
+                    Request *request = NULL;
+                    char *new_buf;
 
                     printf("Potato*******************************\n");
                     if ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
                     {
                         printf("Start parsing... \n");
 
-                        Request *request = parse(buf, strlen(buf), i);
+                        request = parse(buf, strlen(buf), i);
+
+                        new_buf = request->body;
 
                         printf("result of request is %p\n", request);
 
@@ -410,6 +427,41 @@ int main(int argc, char *argv[])
 
                         else
                         {
+
+                            if (readret == BUF_SIZE)
+                            {
+                                int k, val;
+                                for (k = 0; k < request->header_count; ++k)
+                                {
+                                    Request_header header = request->headers[k];
+                                    if (strcmp(header.header_name, "Content-Length") == 0)
+                                    {
+                                        val = atoi(header.header_value);
+                                        break;
+                                    }
+                                }
+                                if (k == request->header_count)
+                                {
+                                    // return 411;
+                                    // code = 411;
+                                    // phrase = "Length Required";
+                                }
+                                else
+                                {
+                                    realloc(new_buf, val);
+                                    for (k = BUF_SIZE; k < val; k += BUF_SIZE)
+                                    {
+                                        readret = recv(i, buf, BUF_SIZE, 0);
+                                        if (readret < 1)
+                                            break;
+                                        memcpy(new_buf + k, buf, min(BUF_SIZE, val - k));
+                                    }
+                                    if (readret >= 1)
+                                        request->body = new_buf;
+                                }
+                                // TODO read more stuff from body
+                            }
+
                             handle_request(request, log);
                             if (send(i, buf, readret, 0) != readret)
                             {
@@ -426,11 +478,7 @@ int main(int argc, char *argv[])
                         printf("reaching end\n");
                         memset(buf, 0, BUF_SIZE);
                     }
-                    //
-                    if (readret == BUF_SIZE)
-                    {
-                        // TODO read more stuff from body
-                    }
+
                     if (readret == -1)
                     {
                         close_socket(i);
@@ -473,4 +521,6 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 }
+
+
 

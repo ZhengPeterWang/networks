@@ -214,6 +214,7 @@ request_header: token ows t_colon ows text ows t_crlf {
  */
 
 body: text{
+	parsing_request->body = (char *)malloc(8192);
 	strcpy(parsing_request->body, $1);
 	YPRINTF("body: match rule 1\n");
 } 
