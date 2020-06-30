@@ -393,34 +393,38 @@ void handle_request(Request *request, Log *log)
         header = strcat(header, len);
         if (code == 200)
         {
-            header = strncat(header, "\r\nContent-Type: ", HEADER_BUF_SIZE);
+            int pass = 0;
+            char * contentheader = strcat(header, "\r\nContent-Type: ");
             // MIME types
             // text/html text/css image/png image/jpeg image/gif application/pdf
 
             char *ext = get_filename_ext(uri_buf);
 
             if(strcmp(ext, "html") == 0){
-                header = strcat(header, "text/html");
+                contentheader = strcat(contentheader, "text/html");
             }
             else if(strcmp(ext, "css") == 0){
-                header = strcat(header, "text/css");
+                contentheader = strcat(contentheader, "text/css");
             }
             else if(strcmp(ext, "png") == 0){
-                header = strcat(header, "image/png");
+                contentheader = strcat(contentheader, "image/png");
             }
             else if(strcmp(ext, "jpeg") == 0){
-                header = strcat(header, "image/jpeg");
+                contentheader = strcat(contentheader, "image/jpeg");
             }
             else if(strcmp(ext, "gif") == 0){
-                header = strcat(header, "image/gif");
+                contentheader = strcat(contentheader, "image/gif");
             }
             else if(strcmp(ext, "pdf") == 0){
-                header = strcat(header, "application/pdf");
+                contentheader = strcat(contentheader, "application/pdf");
             }
             else{
-
+                pass = 1;
             }
             
+            if(pass == 0){
+                header = strcat(header, contentheader);
+            }
 
             header = strncat(header, "\r\nLast-Modified: ", HEADER_BUF_SIZE);
             struct stat *info = (struct stat *)malloc(sizeof(struct stat));
@@ -434,6 +438,7 @@ void handle_request(Request *request, Log *log)
                 time_t last_modified = (info->st_mtimespec).tv_sec;
                 header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
             }
+
         }
         // do not send the content, but send the body.
         // this first.
