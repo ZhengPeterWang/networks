@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -28,6 +29,7 @@
 
 #define ECHO_PORT 9999
 #define BUF_SIZE 4096
+#define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
 
@@ -101,6 +103,9 @@ int main(int argc, char *argv[])
             error_log(log, "", "Error select.\n");
             return EXIT_FAILURE;
         }
+
+        // todo implement timeout
+        // todo handle large buffer requests
 
         for (int i = 0; i < max_sd + 1; i++)
         {
@@ -188,7 +193,7 @@ int main(int argc, char *argv[])
 
                         else
                         {
-                            printf("Parsing succeeded!\n");
+                            handle_request(request, log);
                             if (send(i, buf, readret, 0) != readret)
                             {
                                 close_socket(i);
@@ -247,4 +252,164 @@ int main(int argc, char *argv[])
     close_socket(sock);
 
     return EXIT_SUCCESS;
+}
+
+static const char *DAY_NAMES[] =
+    {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+static const char *MONTH_NAMES[] =
+    {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+char *Rfc1123_DateTimeNow()
+{
+    const int RFC1123_TIME_LEN = 29;
+    time_t t;
+    struct tm tm;
+    char *buf = malloc(RFC1123_TIME_LEN + 1);
+
+    time(&t);
+    gmtime_s(&tm, &t);
+
+    strftime(buf, RFC1123_TIME_LEN + 1, "---, %d --- %Y %H:%M:%S GMT", &tm);
+    memcpy(buf, DAY_NAMES[tm.tm_wday], 3);
+    memcpy(buf + 8, MONTH_NAMES[tm.tm_mon], 3);
+
+    return buf;
+}
+
+void handle_request(Request *request, Log *log)
+{
+    printf("Parsing succeeded!\n");
+
+    int code;
+    char *phrase;
+    char *content;
+    char *header;
+
+    // check version. if not http 1.1, return 505. 10.5.6
+    if (strcmp(request->http_version, "HTTP/1.1"))
+    {
+        code = 505;
+        phrase = "HTTP Version Not Supported";
+        // version not supported. return 505.
+    }
+
+    if (strcmp(request->http_method, "GET") == 0)
+    {
+        // load file from the correct directory
+        // pass it into the buffer
+        // if it is a folder, or a root, try to open index.html.
+        // if retrieved, return 200 OK.
+        // if not found, return 404 Not Found.
+        // if met system call errors, return 500 Internal Server Error.
+
+        // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
+        // (header CRLF)* CRLF body
+        // header implements Connection and Date (strftime()). 14.10  14.18
+        // connection: close close.
+        // date assign one while caching if not exist in request
+        // implement Server ('Liso/1.0') 14.38
+        // Content-Length: 14.13
+        // Content-Type: 14.17 // MIME
+        // Last-Modified: 14.29 // do not do conditional get now.
+    }
+    if (strcmp(request->http_method, "HEAD") == 0)
+    {
+        char uri_buf[HEADER_BUF_SIZE];
+        uri_buf[0] = '.';
+        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
+        FILE *file = fopen(uri_buf, "r");
+
+        if (file == NULL)
+        {
+            if (uri_buf[strlen(uri_buf) - 1] != '/')
+            {
+                code = 404;
+                phrase = "Not Found";
+                // return 404
+            }
+            else
+            {
+                strncat(uri_buf, "index.html", strlen(request->http_uri));
+                file = fopen(uri_buf, "r");
+                if (file == NULL)
+                {
+                    code = 404;
+                    phrase = "Not Found";
+                    // return 404
+                }
+                else
+                {
+                    code = 200;
+                    phrase = "OK";
+                    // return 200
+                }
+            }
+        }
+        else
+        {
+            code = 200;
+            phrase = "OK";
+        }
+        // return 200
+
+        // get the size of the file
+        int sz = 0;
+        if (code == 200)
+        {
+            // start to process the request!
+            if (fseek(file, 0L, SEEK_END) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            sz = ftell(file);
+            if (sz == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            if (fseek(file, 0L, SEEK_SET) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code != 200)
+            sz = 0;
+
+        header = strcat(header, "Date: ");
+        header = strcat(header, Rfc1123_DateTimeNow());
+        header = strcat(header, "\r\n");
+        header = strcat(header, "Connection: ");
+        // TODO close connection when (1) user requests to close (2) this is the last buffer
+        header = strcat(header, "\r\n");
+        header = strcat(header, "Server: Liso/1.0\r\n");
+        header = strcat(header, "Content-Length: ");
+        char *len = itoa(sz);
+        header = strcat(header, len);
+        if (code == 200)
+        {
+            header = strncat(header, "\r\nContent-Type: ", HEADER_BUF_SIZE);
+            // MIME types
+            // text/html text/css image/png image/jpeg image/gif application/pdf
+            header = strncat(header, "\r\nLast-Modified: ", HEADER_BUF_SIZE);
+            struct stat *info = (struct stat *)malloc(sizeof(struct stat));
+            stat(uri_buf, info);
+            time_t last_modified = info->st_mtimespec->tv_sec;
+            header = strncat(header, "", HEADER_BUF_SIZE);
+        }
+        // do not send the content, but send the body.
+        // this first.
+    }
+    if (strcmp(request->http_method, "POST") == 0)
+    {
+    }
+    // for all other methods, return 501.
 }
