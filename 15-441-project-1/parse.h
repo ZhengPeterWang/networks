@@ -18,7 +18,7 @@ typedef struct
 	char http_method[50];
 	char http_uri[4096];
 	Request_header *headers;
-	char body[8192];
+	char *body;
 	int header_count;
 } Request;
 
