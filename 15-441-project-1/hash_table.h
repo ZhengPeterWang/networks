@@ -21,3 +21,5 @@ Table *create_table(int size);
 void insert_table(Table *t, int key, struct sockaddr *val);
 
 struct sockaddr *lookup_table(Table *t, int key);
+
+void remove_table(Table *t, int key);

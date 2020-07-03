@@ -2,7 +2,7 @@
 
 Checkpoint 2
 
-* (1) Do we have to support pipelined requests?
+(1) Do we have to support pipelined requests?
 
         Yes.
 
@@ -10,7 +10,7 @@ Checkpoint 2
 
         No.
 
-* (3) For POST, if a Content-Length header is not provided in the
+(3) For POST, if a Content-Length header is not provided in the
     request, is it fine to respond with a 411 as specified in the RFC?
 
     Yes, this is both possible and desired because it is a valid
@@ -36,13 +36,13 @@ Checkpoint 2
                 I wanted to store the header names and their values in a hash
                 table; now I am thinking of using a linked list."
 
-* (6) Should we expect HTTP/1.1 requests to fit in one buffer?
+(6) Should we expect HTTP/1.1 requests to fit in one buffer?
 
     No, do not assume that they always fit inside one buffer. Be
     prepared to parse across buffer boundaries. But, also check
     question 13.
 
-* (7) Can I assume that the request always has the Content-length field?
+(7) Can I assume that the request always has the Content-length field?
 
     Yes, assume requests to your server have Content-length if
     applicable. That is, you will not have to guess on how many bytes
@@ -107,7 +107,7 @@ Checkpoint 2
 
      Remember though that lines are terminated by 2 bytes: \r\n
 
-*  (12) After processing a particular client's HTTP request, e.g. a GET
+* (12) After processing a particular client's HTTP request, e.g. a GET
       request for index.html, is it bad to read this entire index.html
       file from disk, and then send the full response back to the
       client?
@@ -117,7 +117,7 @@ Checkpoint 2
       Don't try sending the whole file at once---although that might
       be more realistic in practice.
 
-* (13) Are we allowed to reject requests with headers beyond a maximum size?
+(13) Are we allowed to reject requests with headers beyond a maximum size?
 
       Yes, you may reject any header > 8192 bytes.  However, you must
       find and parse the next request properly for pipelining

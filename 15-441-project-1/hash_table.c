@@ -23,7 +23,6 @@ void insert_table(Table *t, int key, struct sockaddr *val)
 {
     int pos = hashCode(t, key);
     Node *list = t->list[pos];
-    Node *newNode = (Node *)malloc(sizeof(Node));
     Node *temp = list;
     while (temp)
     {
@@ -34,6 +33,7 @@ void insert_table(Table *t, int key, struct sockaddr *val)
         }
         temp = temp->next;
     }
+    Node *newNode = (Node *)malloc(sizeof(Node));
     newNode->key = key;
     newNode->val = val;
     newNode->next = list;
@@ -53,4 +53,27 @@ struct sockaddr *lookup_table(Table *t, int key)
         temp = temp->next;
     }
     return NULL;
+}
+
+void remove_table(Table *t, int key)
+{
+    int pos = hashCode(t, key);
+
+    Node *oldNode = t->list[pos];
+
+    Node *temp = oldNode;
+    Node *pre_temp = NULL;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            if (pre_temp != NULL)
+                pre_temp->next = temp->next;
+            free(temp->val);
+            free(temp);
+            return;
+        }
+        pre_temp = temp;
+        temp = temp->next;
+    }
 }

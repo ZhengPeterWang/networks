@@ -22,4 +22,11 @@ typedef struct
 	int header_count;
 } Request;
 
+typedef struct
+{
+	char *buf;
+	ssize_t size;
+	int close; // 0 close, 1 not close
+} Response;
+
 Request *parse(char *buffer, int size, int socketFd);

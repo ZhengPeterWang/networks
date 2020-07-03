@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -31,8 +32,12 @@
 #define BUF_SIZE 8192
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
-#define MAX_CLIENT FD_SETSIZE
+#define MAX_CLIENT FD_SETSIZE / 2
 #define _POSIX_C_SOURCE 200112L
+#define MIN(x, y) x < y ? x : y
+#define WAIT 3
+
+int num_client = 0;
 
 int close_socket(int sock)
 {
@@ -53,10 +58,13 @@ static const char *MONTH_NAMES[] =
 char *Rfc1123_DateTime(time_t t)
 {
     const int RFC1123_TIME_LEN = 29;
-    struct tm * tm;
+    struct tm *tm;
     char *buf = malloc(RFC1123_TIME_LEN + 1);
+    bzero(buf, RFC1123_TIME_LEN + 1);
 
     tm = gmtime(&t);
+    if (tm == NULL)
+        return NULL;
 
     strftime(buf, RFC1123_TIME_LEN + 1, "---, %d --- %Y %H:%M:%S GMT", tm);
     memcpy(buf, DAY_NAMES[tm->tm_wday], 3);
@@ -73,22 +81,59 @@ const char *get_filename_ext(const char *filename)
     return dot + 1;
 }
 
-char *handle_request(Request *request, Log *log)
+Response *handle_request(Request *request, Log *log, int pre_assigned_code)
 {
     printf("Parsing succeeded!\n");
 
     int code;
-    char *phrase;
-    char *content;
-    char *header;
+    int sz = 0;
+    int close = 1; // default not close
+    char *phrase = NULL;
+    char *content = NULL;
+    char *header = (char *)malloc(BUF_SIZE);
+    bzero(header, BUF_SIZE);
+    struct stat *info = NULL;
+    char uri_buf[HEADER_BUF_SIZE];
+    bzero(uri_buf, HEADER_BUF_SIZE);
+
+    // timeout
+
+    if (request == NULL)
+    {
+        switch (pre_assigned_code)
+        {
+        case 408:
+            code = 408;
+            phrase = "Request timeout";
+            break;
+        case 411:
+            code = 411;
+            phrase = "Length Required";
+            break;
+        case 400:
+            code = 400;
+            phrase = "Bad Request";
+            break;
+        case 503:
+            code = 503;
+            phrase = "Service Unavailable";
+        case 0:
+            break;
+        default:
+            printf("Should never happen!\n");
+            break;
+        }
+    }
 
     // check version. if not http 1.1, return 505. 10.5.6
-    if (strcmp(request->http_version, "HTTP/1.1"))
+    else if (strcmp(request->http_version, "HTTP/1.1"))
     {
         code = 505;
         phrase = "HTTP Version Not Supported";
         // version not supported. return 505.
     }
+
+    /* -------  GET and HEAD ------- */
 
     else if (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0)
     {
@@ -99,43 +144,32 @@ char *handle_request(Request *request, Log *log)
         // if not found, return 404 Not Found.
         // if met system call errors, return 500 Internal Server Error.
 
-        // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
-        // (header CRLF)* CRLF body
-        // header implements Connection and Date (strftime()). 14.10  14.18
-        // connection: close close.
-        // date assign one while caching if not exist in request
-        // implement Server ('Liso/1.0') 14.38
-        // Content-Length: 14.13
-        // Content-Type: 14.17 // MIME
-        // Last-Modified: 14.29 // do not do conditional get now.
-        char uri_buf[HEADER_BUF_SIZE];
+        // URI to retrieve the resource
+
         uri_buf[0] = '.';
         strncat(uri_buf, request->http_uri, strlen(request->http_uri));
-        FILE *file = fopen(uri_buf, "r");
+        printf("URI: %s\n", uri_buf);
 
-        if (file == NULL)
+        // check if file exists
+        if (access(uri_buf, F_OK) != 0)
         {
             if (uri_buf[strlen(uri_buf) - 1] != '/')
             {
                 code = 404;
                 phrase = "Not Found";
-                // return 404
             }
             else
             {
                 strncat(uri_buf, "index.html", strlen(request->http_uri));
-                file = fopen(uri_buf, "r");
-                if (file == NULL)
+                if (access(uri_buf, F_OK) != 0)
                 {
                     code = 404;
                     phrase = "Not Found";
-                    // return 404
                 }
                 else
                 {
                     code = 200;
                     phrase = "OK";
-                    // return 200
                 }
             }
         }
@@ -144,13 +178,20 @@ char *handle_request(Request *request, Log *log)
             code = 200;
             phrase = "OK";
         }
-        // return 200
 
+        // read the file
+
+        FILE *file = fopen(uri_buf, "r");
+
+        if (file == NULL)
+        {
+            code = 500;
+            phrase = "Internal Server Error";
+        }
         // get the size of the file
-        int sz = 0;
+
         if (code == 200)
         {
-            // start to process the request!
             if (fseek(file, 0L, SEEK_END) == -1)
             {
                 code = 500;
@@ -177,109 +218,309 @@ char *handle_request(Request *request, Log *log)
         if (code != 200)
             sz = 0;
 
-        header =  "Date: ";
-        header = strcat(header, Rfc1123_DateTime(time(NULL)));
-        header = strcat(header, "\r\n");
-        header = strcat(header, "Connection: ");
-
-        Request_header *tmp = request->headers;
-        for (int i = 0; i < request->header_count; i++)
-        {
-            Request_header rh = *tmp;
-            if (strcmp(rh.header_name, "Connection") == 0)
-            {
-                header = strcat(header, rh.header_value);
-            }
-        }
-
-        header = strcat(header, "\r\n");
-        header = strcat(header, "Server: Liso/1.0\r\n");
-        header = strcat(header, "Content-Length: ");
-        char *len = (char *)malloc(20);
-        *len = sprintf(len, "%d", sz);;
-        header = strcat(header, len);
-        if (code == 200)
-        {
-            int pass = 0;
-            char *contentheader = strcat(header, "\r\nContent-Type: ");
-            // MIME types
-            // text/html text/css image/png image/jpeg image/gif application/pdf
-
-            const char *ext = get_filename_ext(uri_buf);
-
-            if (strcmp(ext, "html") == 0)
-            {
-                contentheader = strcat(contentheader, "text/html");
-            }
-            else if (strcmp(ext, "css") == 0)
-            {
-                contentheader = strcat(contentheader, "text/css");
-            }
-            else if (strcmp(ext, "png") == 0)
-            {
-                contentheader = strcat(contentheader, "image/png");
-            }
-            else if (strcmp(ext, "jpeg") == 0)
-            {
-                contentheader = strcat(contentheader, "image/jpeg");
-            }
-            else if (strcmp(ext, "gif") == 0)
-            {
-                contentheader = strcat(contentheader, "image/gif");
-            }
-            else if (strcmp(ext, "pdf") == 0)
-            {
-                contentheader = strcat(contentheader, "application/pdf");
-            }
-            else
-            {
-                pass = 1;
-            }
-
-            if (pass == 0)
-            {
-                header = strcat(header, contentheader);
-            }
-
-            header = strcat(header, "\r\nLast-Modified: ");
-            struct stat *info = (struct stat *)malloc(sizeof(struct stat));
-            if (stat(uri_buf, info) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-            else
-            {
-                time_t last_modified = (info->st_mtimespec).tv_sec;
-                header = strncat(header, Rfc1123_DateTime(last_modified), HEADER_BUF_SIZE);
-            }
-        }
-        // do not send the content, but send the body.
-        // this first.
+        // Process the request by getting the content
+        // Do not get content while HEAD
 
         if (strcmp(request->http_method, "GET") == 0 && code == 200)
         {
-            // put the stuff into buffer!
+            // create the buffer
             content = (char *)malloc(sz);
-            fgets(content, sz, file);
-            if (ferror(file))
+            bzero(content, sz);
+
+            // read everything into the buffer
+
+            if (fread(content, 1L, sz, file) != sz)
             {
                 code = 500;
                 phrase = "Internal Server Error";
             }
         }
         if (file != NULL)
-            fclose(file);
+            if (fclose(file) != 0)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+
+        // Check file metadata
+
+        info = (struct stat *)malloc(sizeof(struct stat));
+        if (stat(uri_buf, info) == -1)
+        {
+            code = 500;
+            phrase = "Internal Server Error";
+        }
     }
+
+    /* -------  POST ------- */
+
     else if (strcmp(request->http_method, "POST") == 0)
     {
+        // parse the address of the uri
+        uri_buf[0] = '.';
+        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
+
+        // open the file and start writing to it
+        FILE *file = fopen(uri_buf, "w");
+
+        if (file == NULL)
+        {
+            code = 500;
+            phrase = "Internal Server Error";
+        }
+        // get the size of the file
+
+        if (code == 200)
+        {
+            // start to process the request!
+            if (fseek(file, 0L, SEEK_END) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            sz = ftell(file);
+            if (sz == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (code == 200)
+        {
+            if (fseek(file, 0L, SEEK_SET) == -1)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+
+        // put the body into the file!
+        if (code == 200)
+        {
+            char *body = request->body;
+
+            // put the stuff!
+            if (fputs(body, file) < 0)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+        }
+        if (file != NULL)
+            if (fclose(file) != 0)
+            {
+                code = 500;
+                phrase = "Internal Server Error";
+            }
+    }
+
+    // for all other methods, return 501.
+    else
+    {
+        code = 501;
+        phrase = "Not Implemented";
+    }
+
+    // clear up content pointer
+    if (code != 200 && content != NULL)
+    {
+        free(content);
+        content = NULL;
+        sz = 0;
+    }
+
+    // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
+    // (header CRLF)* CRLF body
+    // header implements Connection and Date (strftime()). 14.10  14.18
+    // connection: close close.
+    // date assign one while caching if not exist in request
+    // implement Server ('Liso/1.0') 14.38
+    // Content-Length: 14.13
+    // Content-Type: 14.17 // MIME
+    // Last-Modified: 14.29 // do not do conditional get now.
+
+    // fill in headers
+
+    // headers
+    // 1. Date
+
+    // TODO handle errors when date is not set
+    strcpy(header, "Date: ");
+    char *rfc_date = Rfc1123_DateTime(time(NULL));
+    header = strcat(header, rfc_date);
+    free(rfc_date);
+
+    // 2. Connection
+
+    header = strcat(header, "\r\n");
+    header = strcat(header, "Connection: ");
+
+    if (code == 500 || code == 505 || code == 408 || code == 503)
+    {
+        // 500 error, close connection
+        // 505 wrong version, close connection
+        // 408 timeout
+        close = 0;
     }
     else
     {
+        Request_header *tmp = request->headers;
+        for (int i = 0; i < request->header_count; i++)
+        {
+            if (strcmp(tmp->header_name, "Connection") == 0)
+            {
+                header = strcat(header, tmp->header_value);
+                if (strcmp(tmp->header_name, "close") == 0)
+                {
+                    close = 0;
+                }
+                break;
+            }
+            tmp++;
+        }
     }
-    // for all other methods, return 501.
+    if (close == 0)
+        header = strcat(header, "close");
+    else
+        header = strcat(header, "keep-alive");
+
+    // 3. Server
+
+    header = strcat(header, "\r\n");
+    header = strcat(header, "Server: Liso/1.0\r\n");
+
+    // 4. Content-Length
+
+    header = strcat(header, "Content-Length: ");
+    char *len = (char *)malloc(20);
+    bzero(len, 20);
+    *len = sprintf(len, "%d", sz);
+
+    header = strcat(header, len);
+    free(len);
+    header = strcat(header, "\r\n");
+
+    // 5. Content-Type
+
+    if (code == 200 && (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0))
+    {
+        int pass = 0;
+        char *contentheader = strcat(header, "Content-Type: ");
+        // MIME types
+        // text/html text/css image/png image/jpeg image/gif application/pdf
+
+        const char *ext = get_filename_ext(uri_buf);
+
+        if (strcmp(ext, "html") == 0)
+        {
+            contentheader = strcat(contentheader, "text/html");
+        }
+        else if (strcmp(ext, "css") == 0)
+        {
+            contentheader = strcat(contentheader, "text/css");
+        }
+        else if (strcmp(ext, "png") == 0)
+        {
+            contentheader = strcat(contentheader, "image/png");
+        }
+        else if (strcmp(ext, "jpeg") == 0)
+        {
+            contentheader = strcat(contentheader, "image/jpeg");
+        }
+        else if (strcmp(ext, "gif") == 0)
+        {
+            contentheader = strcat(contentheader, "image/gif");
+        }
+        else if (strcmp(ext, "pdf") == 0)
+        {
+            contentheader = strcat(contentheader, "application/pdf");
+        }
+        else
+        {
+            pass = 1;
+        }
+
+        if (pass == 0)
+        {
+            header = strcat(header, contentheader);
+            header = strcat(header, "\r\n");
+        }
+
+        // 6. Last-Modified
+
+        header = strcat(header, "Last-Modified: ");
+
+        time_t last_modified = (info->st_mtimespec).tv_sec;
+        char *temp_buf = Rfc1123_DateTime(last_modified);
+        header = strcat(header, temp_buf);
+        free(temp_buf);
+
+        header = strcat(header, "\r\n");
+
+        free(info);
+    }
+
+    // Return a response
+
+    Response *response = (Response *)malloc(sizeof(Response));
+    char chr[BUF_SIZE];
+    sprintf(chr, "HTTP/1.1 %d %s\r\n", code, phrase);
+    char *final_buf = (char *)malloc(sz + strlen(header) + strlen(chr) + 1);
+    bzero(final_buf, sz + strlen(header) + strlen(chr) + 1);
+    strcpy(final_buf, chr);
+    strcat(final_buf, header);
+    strcat(final_buf, "\r\n");
+    if (content != NULL)
+        strcat(final_buf, content);
+
+    response->buf = final_buf;
+    response->size = strlen(final_buf);
+    response->close = close;
+    free(header);
+    free(content);
 
     // return header vs contents
+    return response;
+}
+
+int send_reply(int socket_num, int main_socket_num, Response *response, Log *log, Table *table, fd_set *readfds)
+{
+    struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, socket_num);
+    char *addr = inet_ntoa(new_addr->sin_addr);
+
+    if (send(socket_num, response->buf, response->size, 0) != response->size)
+    {
+        close_socket(socket_num);
+        close_socket(main_socket_num);
+        error_log(log, addr, "Error sending to client.\n");
+        return EXIT_FAILURE;
+    }
+
+    // TODO log correctly the request!
+    access_log(log, addr, "", response->buf, response->size, strlen(response->buf));
+
+    // close socket
+    // 1. When connection closes
+    // 2. When the server errors
+    // 3. When client timed out after establishing connection
+    // While the third happens, we would send client a close notice
+    if (response->close == 0)
+    {
+        if (close_socket(socket_num))
+        {
+            close_socket(main_socket_num);
+            error_log(log, "", "Error closing client socket.\n");
+            return EXIT_FAILURE;
+        }
+        FD_CLR(socket_num, readfds);
+        remove_table(table, socket_num);
+        num_client--;
+    }
+
+    return SUCCESS;
 }
 
 int main(int argc, char *argv[])
@@ -336,19 +577,48 @@ int main(int argc, char *argv[])
 
         fd_set newfds = readfds;
 
-        if (select(max_sd + 1, &newfds, NULL, NULL, NULL) < 0)
+        // set timeout value
+
+        struct timeval timeout;
+        timeout.tv_sec = WAIT;
+        timeout.tv_usec = 0;
+
+        int select_val;
+
+        // select
+
+        if ((select_val = select(max_sd + 1, &newfds, NULL, NULL, &timeout)) < 0)
         {
             close(sock);
             error_log(log, "", "Error select.\n");
             return EXIT_FAILURE;
         }
 
-        // todo implement timeout
-        // todo handle large buffer requests
+        // handling timeout
+
+        if (select_val == 0)
+        {
+            for (int i = 0; i < max_sd + 1; i++)
+            {
+                if (i != sock && lookup_table(table, i) != NULL)
+                {
+                    // send to that client that we have timed out!
+                    Response *response = handle_request(NULL, log, 408);
+                    if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                    {
+                        free(response->buf);
+                        free(response);
+                        return EXIT_FAILURE;
+                    }
+                    free(response->buf);
+                    free(response);
+                }
+            }
+            continue;
+        }
 
         for (int i = 0; i < max_sd + 1; i++)
         {
-
             if (FD_ISSET(i, &newfds))
             {
                 printf("We got one %d\n", i);
@@ -368,13 +638,33 @@ int main(int argc, char *argv[])
                         return EXIT_FAILURE;
                     }
 
-                    FD_SET(new_socket, &readfds);
+                    // return 503 code when unable to accept more connections
 
-                    insert_table(table, new_socket, temp_addr);
-
-                    if (new_socket > max_sd)
+                    if (num_client == MAX_CLIENT)
                     {
-                        max_sd = new_socket;
+                        Response *response = handle_request(NULL, log, 503);
+                        if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                        {
+                            free(response->buf);
+                            free(response);
+                            return EXIT_FAILURE;
+                        }
+                        free(response->buf);
+                        free(response);
+                    }
+
+                    else
+                    {
+                        num_client++;
+
+                        FD_SET(new_socket, &readfds);
+
+                        insert_table(table, new_socket, temp_addr);
+
+                        if (new_socket > max_sd)
+                        {
+                            max_sd = new_socket;
+                        }
                     }
                 }
                 else
@@ -386,48 +676,22 @@ int main(int argc, char *argv[])
                     if ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
                     {
                         printf("Start parsing... \n");
-
                         request = parse(buf, strlen(buf), i);
-
                         new_buf = request->body;
-
                         printf("result of request is %p\n", request);
+
+                        Response *response;
 
                         if (request == NULL)
                         {
-                            printf("Buffer:");
-                            for (int i = 0; i < BUF_SIZE; ++i)
-                            {
-                                printf("%d,", buf[i]);
-                            }
-                            printf("\n");
-
-                            char res[] = "HTTP/1.1 400 Bad Request\r\n";
+                            response = handle_request(NULL, log, 400);
                             printf("processing request\n");
-                            if (send(i, res, strlen(res), 0) != strlen(res))
-                            {
-                                close_socket(i);
-                                close_socket(sock);
-                                error_log(log, "", "Error sending to client.\n");
-                                return EXIT_FAILURE;
-                            }
 
-                            printf("reached checkpoint 1\n");
-
-                            struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, i);
-
-                            printf("reached here\n");
-
-                            access_log(log, inet_ntoa(new_addr->sin_addr), "", res, 400, strlen(res));
-
-                            printf("done\n");
                             // parsing failed
                             // send a response of 400
                         }
-
                         else
                         {
-
                             if (readret == BUF_SIZE)
                             {
                                 int k, val;
@@ -442,41 +706,44 @@ int main(int argc, char *argv[])
                                 }
                                 if (k == request->header_count)
                                 {
-                                    // return 411;
-                                    // code = 411;
-                                    // phrase = "Length Required";
+                                    // send a response of 411
+                                    response = handle_request(NULL, log, 411);
                                 }
                                 else
                                 {
-                                    realloc(new_buf, val);
-                                    for (k = BUF_SIZE; k < val; k += BUF_SIZE)
+                                    new_buf = realloc(new_buf, val);
+                                    // TODO check if strlen(new_buf) is the correct starting point
+                                    for (k = strlen(new_buf); k < val; k += BUF_SIZE)
                                     {
+                                        bzero(buf, BUF_SIZE);
                                         readret = recv(i, buf, BUF_SIZE, 0);
                                         if (readret < 1)
                                             break;
-                                        memcpy(new_buf + k, buf, min(BUF_SIZE, val - k));
+                                        memcpy(new_buf + k, buf, MIN(BUF_SIZE, val - k));
                                     }
                                     if (readret >= 1)
+                                    {
                                         request->body = new_buf;
+                                    }
                                 }
-                                // TODO read more stuff from body
+                                // read more stuff from body
                             }
-
-                            handle_request(request, log);
-                            if (send(i, buf, readret, 0) != readret)
-                            {
-                                close_socket(i);
-                                close_socket(sock);
-                                error_log(log, "", "Error sending to client.\n");
-                                return EXIT_FAILURE;
-                            }
-
-                            struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, i);
-
-                            access_log(log, inet_ntoa(new_addr->sin_addr), "", buf, 200, strlen(buf));
+                            // handle request
+                            if (response == NULL)
+                                response = handle_request(request, log, 0);
                         }
-                        printf("reaching end\n");
-                        memset(buf, 0, BUF_SIZE);
+
+                        // printf("reaching end\n");
+                        // memset(buf, 0, BUF_SIZE);
+
+                        if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                        {
+                            free(response->buf);
+                            free(response);
+                            return EXIT_FAILURE;
+                        }
+                        free(response->buf);
+                        free(response);
                     }
 
                     if (readret == -1)
@@ -495,22 +762,11 @@ int main(int argc, char *argv[])
                             return EXIT_FAILURE;
                         }
                         FD_CLR(i, &readfds);
+                        remove_table(table, i);
 
                         fprintf(stderr, "Socket reaching end %d.\n", i);
                     }
                 }
-
-                // printf("Closing client %d's socket\n", sd);
-                // if (close_socket(sd))
-                // {
-                //     close_socket(sock);
-                //     fprintf(stderr, "Error closing client socket.\n");
-                //     return EXIT_FAILURE;
-                // }
-                // else
-                // {
-                //     client_sock[i] = 0;
-                // }
             }
         }
     }
@@ -521,6 +777,3 @@ int main(int argc, char *argv[])
 
     return EXIT_SUCCESS;
 }
-
-
-
