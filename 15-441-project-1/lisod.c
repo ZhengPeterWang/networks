@@ -520,9 +520,10 @@ int send_reply(int socket_num, int main_socket_num, Response *response, Log *log
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
+    if (argc != 4)
     {
         printf("Usage: ./lisod [HTTP Port] [log file] [www file]\n");
+        printf("%d\n", argc);
         return -1;
     }
     int http_port = atoi(argv[0]);
@@ -605,6 +606,7 @@ int main(int argc, char *argv[])
             {
                 if (i != sock && lookup_table(table, i) != NULL)
                 {
+                    printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
                     Response *response = handle_request(NULL, log, 408, www_file);
                     if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
@@ -617,6 +619,7 @@ int main(int argc, char *argv[])
                     free(response);
                 }
             }
+            printf("Finished sending timeout responses!\n");
             continue;
         }
 
