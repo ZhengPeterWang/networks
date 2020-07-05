@@ -55,14 +55,14 @@ static const char *MONTH_NAMES[] =
     {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
-char *Rfc1123_DateTime(time_t t)
+char *Rfc1123_DateTime(time_t *t)
 {
     const int RFC1123_TIME_LEN = 29;
     struct tm *tm;
     char *buf = malloc(RFC1123_TIME_LEN + 1);
     bzero(buf, RFC1123_TIME_LEN + 1);
 
-    tm = gmtime(&t);
+    tm = gmtime(t);
     if (tm == NULL)
         return NULL;
 
@@ -90,7 +90,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     int close = 1; // default not close
     char *phrase = NULL;
     char *content = NULL;
-    char *header = (char *)malloc(10 * BUF_SIZE);
+    char *header = malloc(BUF_SIZE);
     bzero(header, BUF_SIZE);
     struct stat *info = NULL;
     char uri_buf[HEADER_BUF_SIZE];
@@ -248,7 +248,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         {
             // create the buffer
             content = (char *)malloc(sz + 1);
-            bzero(content, sz);
+            bzero(content, sz + 1);
             printf("sz: %d\n", sz);
 
             // read everything into the buffer
@@ -382,8 +382,9 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     // TODO handle errors when date is not set
     strcpy(header, "Date: ");
+    time_t t = time(NULL);
 
-    char *rfc_date = Rfc1123_DateTime(time(NULL));
+    char *rfc_date = Rfc1123_DateTime(&t);
     strcat(header, rfc_date);
     // free(rfc_date);
 
@@ -485,7 +486,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         strcat(header, "Last-Modified: ");
 
         time_t last_modified = (info->st_mtimespec).tv_sec;
-        char *temp_buf = Rfc1123_DateTime(last_modified);
+        char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         // free(temp_buf);
 
