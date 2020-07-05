@@ -121,11 +121,11 @@ t_dot;
  */
 token:
 allowed_char_for_token {
-	YPRINTF("%c, token: Matched rule 1.\n", $1);
+	// YPRINTF("%c, token: Matched rule 1.\n", $1);
 	snprintf($$, 8192, "%c", $1);
 } |
 token allowed_char_for_token {
-	YPRINTF("%s, %c token: Matched rule 2.\n", $1, $2);
+	// YPRINTF("%s, %c token: Matched rule 2.\n", $1, $2);
   snprintf($$, 8192, "%s%c", $1, $2);
 };
 
@@ -166,11 +166,11 @@ t_backslash {
  * 	   also contains spaces.
  */
 text: allowed_char_for_text {
-	YPRINTF("%c text: Matched rule 1.\n", $1);
+	// YPRINTF("%c text: Matched rule 1.\n", $1);
 	snprintf($$, 8192, "%c", $1);
 } |
 text ows allowed_char_for_text {
-	YPRINTF("%s, %s, %c text: Matched rule 2.\n", $1, $2, $3);
+	// YPRINTF("%s, %s, %c text: Matched rule 2.\n", $1, $2, $3);
 	snprintf($$, 8192, "%s%s%c", $1, $2, $3);
 };
 
@@ -178,15 +178,15 @@ text ows allowed_char_for_text {
  * Rule 5: Optional white spaces
  */
 ows: {
-	YPRINTF("OWS: Matched rule 1 ows\n");
+	// YPRINTF("OWS: Matched rule 1 ows\n");
 	$$[0]=0;
 } |
 t_sp {
-	YPRINTF("OWS: Matched rule 2 t_sp\n");
+	// YPRINTF("OWS: Matched rule 2 t_sp\n");
 	snprintf($$, 8192, "%c", $1);
 } |
 t_ws {
-	YPRINTF("OWS: Matched rule 3 t_ws\n");
+	// YPRINTF("OWS: Matched rule 3 t_ws\n");
 	snprintf($$, 8192, "%s", $1);
 };
 
@@ -194,15 +194,15 @@ request_line: token t_sp text t_sp text t_crlf {
     strcpy(parsing_request->http_method, $1);
 	strcpy(parsing_request->http_uri, $3);
 	strcpy(parsing_request->http_version, $5);
-	YPRINTF("request_Line:\n%s\n%s\n%s\n",$1, $3,$5);
+	// YPRINTF("request_Line:\n%s\n%s\n%s\n",$1, $3,$5);
 }
 
 request_header: token ows t_colon ows text ows t_crlf {
-	parsing_request->headers = (Request_header *)realloc(parsing_request->headers, sizeof(Request_header) * (parsing_request->header_count + 1));
+	parsing_request->headers = realloc(parsing_request->headers, sizeof(Request_header) * (parsing_request->header_count + 1));
     strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
 	strcpy(parsing_request->headers[parsing_request->header_count].header_value, $5);
 	parsing_request->header_count++;
-	YPRINTF("request_Header:\n%s\n%s\n",$1,$5);
+	// YPRINTF("request_Header:\n%s\n%s\n",$1,$5);
 };
 
 
@@ -216,10 +216,10 @@ request_header: token ows t_colon ows text ows t_crlf {
 body: text{
 	parsing_request->body = (char *)malloc(8192);
 	strcpy(parsing_request->body, $1);
-	YPRINTF("body: match rule 1\n");
+	// YPRINTF("body: match rule 1\n");
 } 
 | {
-	YPRINTF("body: match rule 2\n");
+	// YPRINTF("body: match rule 2\n");
 };
 
 request_headers: {
@@ -246,11 +246,7 @@ void set_parsing_options(char *buf, size_t siz, Request *request)
 	parsing_offset = 0;
 	parsing_buf_siz = siz;
     parsing_request = request;
-	printf("parse:\n");
-	for (int i = 0; i < siz; ++i){
-		printf("%d,", parsing_buf[i]);
-	}
-	printf("\n");
+
 }
 
 void yyerror (const char *s) {

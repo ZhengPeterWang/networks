@@ -34,7 +34,7 @@ Log *log_init_default(const char *file)
 
 int error_log(Log *log, char *ip_buf, const char *err_msg)
 {
-    char *first_buf;
+    char *first_buf = malloc(BUFSIZ);
 
     time_t t = time(NULL);
 
@@ -117,7 +117,7 @@ int close_log(Log *log)
         fprintf(stderr, "Error closing file with error number %d.\n", err_num);
         return LOG_FAILURE;
     }
-    free(log->header);
-    free(log);
+    // free(log->header);
+    // free(log);
     return SUCCESS;
 }

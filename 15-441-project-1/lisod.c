@@ -35,6 +35,7 @@
 #define _POSIX_C_SOURCE 200112L
 #define MIN(x, y) x < y ? x : y
 #define WAIT 3
+#define CLOSE_SOCKET_FAILURE 2
 
 int num_client = 0;
 
@@ -42,7 +43,7 @@ int close_socket(int sock)
 {
     if (close(sock))
     {
-        fprintf(stderr, "Failed closing socket.\n");
+        fprintf(stderr, "Failed closing socket. %d\n", sock);
         return 1;
     }
     return 0;
@@ -169,7 +170,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
             printf("file exists!\n");
             if (S_ISDIR(info->st_mode))
             {
-                strcat(uri_buf, "index.html");
+                strcat(uri_buf, "/index.html");
                 printf("concacenated \n");
                 if (access(uri_buf, F_OK) != 0)
                 {
@@ -201,7 +202,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
         // read the file
 
-        FILE *file = fopen("./static_site/index.html", "r");
+        FILE *file = fopen(uri_buf, "r");
 
         if (file == NULL)
         {
@@ -252,14 +253,17 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
             // read everything into the buffer
             char symbol;
-            int i = 0;
+            int i;
             if (file != NULL)
             {
-                while ((symbol = getc(file)) != EOF)
+                printf("Start passing file here!");
+                for (i = 0; i < sz; i++)
                 {
+                    symbol = getc(file);
                     content[i] = symbol;
-                    i++;
+                    printf("%c ", symbol);
                 }
+                printf("\n");
             }
             if (ferror(file))
             {
@@ -354,7 +358,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     // clear up content pointer
     if (code != 200 && content != NULL)
     {
-        free(content);
+        // free(content);
         content = NULL;
         sz = 0;
     }
@@ -381,7 +385,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     char *rfc_date = Rfc1123_DateTime(time(NULL));
     strcat(header, rfc_date);
-    free(rfc_date);
+    // free(rfc_date);
 
     printf("Date header: %s\n", header);
 
@@ -419,8 +423,6 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     else
         strcat(header, "keep-alive");
 
-    printf("After 2. , close is :%d, header: %s\n", close, header);
-
     // 3. Server
 
     strcat(header, "\r\n");
@@ -431,10 +433,10 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     strcat(header, "Content-Length: ");
     char *len = (char *)malloc(20);
     bzero(len, 20);
-    *len = sprintf(len, "%d", sz);
+    sprintf(len, "%d", sz);
 
     strcat(header, len);
-    free(len);
+    // free(len);
     strcat(header, "\r\n");
 
     // 5. Content-Type
@@ -485,35 +487,42 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         time_t last_modified = (info->st_mtimespec).tv_sec;
         char *temp_buf = Rfc1123_DateTime(last_modified);
         strcat(header, temp_buf);
-        free(temp_buf);
+        // free(temp_buf);
 
         strcat(header, "\r\n");
 
-        free(info);
+        // free(info);
     }
 
-    printf("After 6. , header: %s\n", header);
+    strcat(header, "\r\n");
+
+    printf("After 6, header: %s\n", header);
 
     // Return a response
 
     Response *response = (Response *)malloc(sizeof(Response));
     char chr[BUF_SIZE];
     sprintf(chr, "HTTP/1.1 %d %s\r\n", code, phrase);
-    char *final_buf = (char *)malloc(sz + strlen(header) + strlen(chr) + 1);
-    bzero(final_buf, sz + strlen(header) + strlen(chr) + 1);
+    char *final_buf = (char *)malloc(sz + strlen(header) + strlen(chr));
+    bzero(final_buf, sz + strlen(header) + strlen(chr));
     strcpy(final_buf, chr);
     strcat(final_buf, header);
-    strcat(final_buf, "\r\n");
-    if (content != NULL)
-        strcat(final_buf, content);
+
+    printf("final_buf: %s\n", final_buf);
+
+    for (int i = 0; i < sz; ++i)
+    {
+        final_buf[i + strlen(header) + strlen(chr)] = content[i];
+    }
 
     response->buf = final_buf;
-    response->size = strlen(final_buf);
+    response->size = sz + strlen(header) + strlen(chr);
+    printf("response size: %d\n", response->size);
     response->close = close;
-    free(header);
+    // free(header);
     printf("Content pointer: %d\n", content);
-    if (content != NULL)
-        free(content);
+    // if (content != NULL)
+    //     free(content);
 
     printf("Just before response\n");
 
@@ -521,21 +530,27 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     return response;
 }
 
-int send_reply(int socket_num, int main_socket_num, Response *response, Log *log, Table *table, fd_set *readfds)
+int send_reply(int socket_num, int main_socket_num, Response *response, Log *log, Table *table, fd_set **readfds)
 {
     struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, socket_num);
     char *addr = inet_ntoa(new_addr->sin_addr);
 
-    if (send(socket_num, response->buf, response->size, 0) != response->size)
+    printf("Sending reply to socket %d with main socket %d\n", socket_num, main_socket_num);
+
+    access_log(log, addr, "", response->buf, response->size, strlen(response->buf));
+
+    int num = send(socket_num, response->buf, response->size, 0);
+
+    if (num != response->size)
     {
         close_socket(socket_num);
         close_socket(main_socket_num);
+        printf("send num: %d, errno: %d\n", num, errno);
         error_log(log, addr, "Error sending to client.\n");
         return EXIT_FAILURE;
     }
 
     // TODO log correctly the request!
-    access_log(log, addr, "", response->buf, response->size, strlen(response->buf));
 
     // close socket
     // 1. When connection closes
@@ -548,9 +563,9 @@ int send_reply(int socket_num, int main_socket_num, Response *response, Log *log
         {
             close_socket(main_socket_num);
             error_log(log, "", "Error closing client socket.\n");
-            return EXIT_FAILURE;
+            return CLOSE_SOCKET_FAILURE;
         }
-        FD_CLR(socket_num, readfds);
+        FD_CLR(socket_num, *readfds);
         remove_table(table, socket_num);
         num_client--;
     }
@@ -610,30 +625,31 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    fd_set readfds;
+    fd_set *readfds = malloc(sizeof(fd_set));
     int max_sd = sock;
 
-    FD_ZERO(&readfds);
-    FD_SET(sock, &readfds);
+    FD_ZERO(readfds);
+    FD_SET(sock, readfds);
 
     /* finally, loop waiting for input and then write it back */
     while (1)
     {
         printf("Potato...%d\n", max_sd);
 
-        fd_set newfds = readfds;
+        fd_set newfds = *readfds;
 
         // set timeout value
 
-        struct timeval timeout;
-        timeout.tv_sec = WAIT;
-        timeout.tv_usec = 0;
+        struct timeval *timeout = malloc(sizeof(struct timeval));
+        timeout->tv_sec = WAIT;
+        timeout->tv_usec = 0;
 
         int select_val;
 
         // select
+        printf("max sd: %d\n", max_sd);
 
-        if ((select_val = select(max_sd + 1, &newfds, NULL, NULL, &timeout)) < 0)
+        if ((select_val = select(max_sd + 1, &newfds, NULL, NULL, timeout)) < 0)
         {
             close(sock);
             error_log(log, "", "Error select.\n");
@@ -651,16 +667,24 @@ int main(int argc, char *argv[])
                     printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
                     Response *response = handle_request(NULL, log, 408, www_file);
-                    if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                    int k = send_reply(i, sock, response, log, table, &readfds);
+                    if (k == EXIT_FAILURE)
                     {
                         printf("1\n");
-                        free(response->buf);
-                        free(response);
+                        // free(response->buf);
+                        // free(response);
                         printf("In 657\n");
                         return EXIT_FAILURE;
                     }
-                    free(response->buf);
-                    free(response);
+                    else if (k == CLOSE_SOCKET_FAILURE)
+                    {
+                        printf("2\n");
+                        // free(response->buf);
+                        // free(response);
+                        printf("In 657\n");
+                    }
+                    // free(response->buf);
+                    // free(response);
                     printf("In 662\n");
                 }
             }
@@ -697,13 +721,13 @@ int main(int argc, char *argv[])
                         if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
                         {
                             printf("2\n");
-                            free(response->buf);
-                            free(response);
+                            // free(response->buf);
+                            // free(response);
                             printf("In 699\n");
                             return EXIT_FAILURE;
                         }
-                        free(response->buf);
-                        free(response);
+                        // free(response->buf);
+                        // free(response);
                         printf("In 704\n");
                     }
 
@@ -711,7 +735,7 @@ int main(int argc, char *argv[])
                     {
                         num_client++;
 
-                        FD_SET(new_socket, &readfds);
+                        FD_SET(new_socket, readfds);
 
                         insert_table(table, new_socket, temp_addr);
 
@@ -730,11 +754,12 @@ int main(int argc, char *argv[])
                     if ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
                     {
                         printf("Start parsing... \n");
+                        printf("%s\n", buf);
                         request = parse(buf, strlen(buf), i);
                         new_buf = request->body;
                         printf("result of request is %p\n", request);
 
-                        Response *response;
+                        Response *response = NULL;
 
                         if (request == NULL)
                         {
@@ -796,13 +821,13 @@ int main(int argc, char *argv[])
                         if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
                         {
                             printf("3\n");
-                            free(response->buf);
-                            free(response);
+                            // free(response->buf);
+                            // free(response);
                             printf("In 797\n");
                             return EXIT_FAILURE;
                         }
-                        free(response->buf);
-                        free(response);
+                        // free(response->buf);
+                        // free(response);
                         printf("In 802\n");
                     }
 
@@ -821,7 +846,7 @@ int main(int argc, char *argv[])
                             error_log(log, "", "Error closing client socket.\n");
                             return EXIT_FAILURE;
                         }
-                        FD_CLR(i, &readfds);
+                        FD_CLR(i, readfds);
                         remove_table(table, i);
 
                         fprintf(stderr, "Socket reaching end %d.\n", i);
