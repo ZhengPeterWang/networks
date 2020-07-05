@@ -126,7 +126,7 @@ allowed_char_for_token {
 } |
 token allowed_char_for_token {
 	YPRINTF("%s, %c token: Matched rule 2.\n", $1, $2);
-  snprintf($$, 8192, "%s,%c", $1, $2);
+  snprintf($$, 8192, "%s%c", $1, $2);
 };
 
 /*
@@ -171,7 +171,7 @@ text: allowed_char_for_text {
 } |
 text ows allowed_char_for_text {
 	YPRINTF("%s, %s, %c text: Matched rule 2.\n", $1, $2, $3);
-	snprintf($$, 8192, "%s,%s,%c", $1, $2, $3);
+	snprintf($$, 8192, "%s%s%c", $1, $2, $3);
 };
 
 /*

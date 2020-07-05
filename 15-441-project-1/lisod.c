@@ -89,7 +89,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     int close = 1; // default not close
     char *phrase = NULL;
     char *content = NULL;
-    char *header = (char *)malloc(BUF_SIZE);
+    char *header = (char *)malloc(10 * BUF_SIZE);
     bzero(header, BUF_SIZE);
     struct stat *info = NULL;
     char uri_buf[HEADER_BUF_SIZE];
@@ -125,8 +125,9 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     }
 
     // check version. if not http 1.1, return 505. 10.5.6
-    else if (strcmp(request->http_version, "HTTP/1.1"))
+    else if (strcmp(request->http_version, "HTTP/1.1") != 0)
     {
+        printf("Version: %s\n", request->http_version);
         code = 505;
         phrase = "HTTP Version Not Supported";
         // version not supported. return 505.
@@ -146,27 +147,30 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         // URI to retrieve the resource
 
         strcpy(uri_buf, www_folder);
-        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
-        printf("URI: %s\n", uri_buf);
-
-        info = (struct stat *)malloc(sizeof(struct stat));
-        if (stat(uri_buf, info) == -1)
+        if (strcmp(request->http_uri, "/") != 0)
         {
-            code = 500;
-            phrase = "Internal Server Error";
+            printf("Content of buffer: %s\n", uri_buf);
+            strcat(uri_buf, request->http_uri);
         }
 
+        info = (struct stat *)malloc(sizeof(struct stat));
+
+        int n = stat(uri_buf, info);
+        printf("stat: %d", n);
+
         // check if file exists
-        else if (access(uri_buf, F_OK) != 0)
+        if (access(uri_buf, F_OK) != 0)
         {
-            if (!S_ISDIR(info->st_mode))
+            code = 404;
+            phrase = "Not Found";
+        }
+        else
+        {
+            printf("file exists!\n");
+            if (S_ISDIR(info->st_mode))
             {
-                code = 404;
-                phrase = "Not Found";
-            }
-            else
-            {
-                strncat(uri_buf, "index.html", strlen(request->http_uri));
+                strcat(uri_buf, "index.html");
+                printf("concacenated \n");
                 if (access(uri_buf, F_OK) != 0)
                 {
                     code = 404;
@@ -178,16 +182,26 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
                     phrase = "OK";
                 }
             }
+            else
+            {
+                code = 200;
+                phrase = "OK";
+            }
         }
-        else
+
+        printf("URI: %s\n", uri_buf);
+
+        if (stat(uri_buf, info) == -1)
         {
-            code = 200;
-            phrase = "OK";
+            code = 500;
+            phrase = "Internal Server Error";
         }
+
+        printf("Reached point 1. code: %d\n", code);
 
         // read the file
 
-        FILE *file = fopen(uri_buf, "r");
+        FILE *file = fopen("./static_site/index.html", "r");
 
         if (file == NULL)
         {
@@ -224,31 +238,45 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         if (code != 200)
             sz = 0;
 
+        printf("Reached point 2. code: %d, sz: %d\n", code, sz);
+
         // Process the request by getting the content
         // Do not get content while HEAD
 
         if (strcmp(request->http_method, "GET") == 0 && code == 200)
         {
             // create the buffer
-            content = (char *)malloc(sz);
+            content = (char *)malloc(sz + 1);
             bzero(content, sz);
+            printf("sz: %d\n", sz);
 
             // read everything into the buffer
-
-            if (fread(content, 1L, sz, file) != sz)
+            char symbol;
+            int i = 0;
+            if (file != NULL)
+            {
+                while ((symbol = getc(file)) != EOF)
+                {
+                    content[i] = symbol;
+                    i++;
+                }
+            }
+            if (ferror(file))
             {
                 code = 500;
                 phrase = "Internal Server Error";
+                printf("i: %d Ferror!\n", i);
             }
         }
         if (file != NULL)
             if (fclose(file) != 0)
             {
+                printf("I am there!\n");
                 code = 500;
                 phrase = "Internal Server Error";
             }
 
-        // Check file metadata
+        printf("Reached point 3. code: %d, sz: %d\n", code, sz);
     }
 
     /* -------  POST ------- */
@@ -331,6 +359,8 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         sz = 0;
     }
 
+    printf("reached point 4. code: %d\n", code);
+
     // returns: HTTP-Version SP Status-Code SP Reason-Phrase CRLF
     // (header CRLF)* CRLF body
     // header implements Connection and Date (strftime()). 14.10  14.18
@@ -348,14 +378,17 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     // TODO handle errors when date is not set
     strcpy(header, "Date: ");
+
     char *rfc_date = Rfc1123_DateTime(time(NULL));
-    header = strcat(header, rfc_date);
+    strcat(header, rfc_date);
     free(rfc_date);
+
+    printf("Date header: %s\n", header);
 
     // 2. Connection
 
-    header = strcat(header, "\r\n");
-    header = strcat(header, "Connection: ");
+    strcat(header, "\r\n");
+    strcat(header, "Connection: ");
 
     if (code == 500 || code == 505 || code == 408 || code == 503)
     {
@@ -371,42 +404,44 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         {
             if (strcmp(tmp->header_name, "Connection") == 0)
             {
-                header = strcat(header, tmp->header_value);
-                if (strcmp(tmp->header_name, "close") == 0)
+                if (strcmp(tmp->header_value, "close") == 0)
                 {
                     close = 0;
                 }
+                printf("reached connection\n");
                 break;
             }
             tmp++;
         }
     }
     if (close == 0)
-        header = strcat(header, "close");
+        strcat(header, "close");
     else
-        header = strcat(header, "keep-alive");
+        strcat(header, "keep-alive");
+
+    printf("After 2. , close is :%d, header: %s\n", close, header);
 
     // 3. Server
 
-    header = strcat(header, "\r\n");
-    header = strcat(header, "Server: Liso/1.0\r\n");
+    strcat(header, "\r\n");
+    strcat(header, "Server: Liso/1.0\r\n");
 
     // 4. Content-Length
 
-    header = strcat(header, "Content-Length: ");
+    strcat(header, "Content-Length: ");
     char *len = (char *)malloc(20);
     bzero(len, 20);
     *len = sprintf(len, "%d", sz);
 
-    header = strcat(header, len);
+    strcat(header, len);
     free(len);
-    header = strcat(header, "\r\n");
+    strcat(header, "\r\n");
 
     // 5. Content-Type
 
     if (code == 200 && (strcmp(request->http_method, "GET") == 0 || strcmp(request->http_method, "HEAD") == 0))
     {
-        char *contentheader = strcat(header, "Content-Type: ");
+        strcat(header, "Content-Type: ");
         // MIME types
         // text/html text/css image/png image/jpeg image/gif application/pdf
 
@@ -414,49 +449,50 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
         if (strcmp(ext, "html") == 0)
         {
-            contentheader = strcat(contentheader, "text/html");
+            strcat(header, "text/html");
         }
         else if (strcmp(ext, "css") == 0)
         {
-            contentheader = strcat(contentheader, "text/css");
+            strcat(header, "text/css");
         }
         else if (strcmp(ext, "png") == 0)
         {
-            contentheader = strcat(contentheader, "image/png");
+            strcat(header, "image/png");
         }
         else if (strcmp(ext, "jpeg") == 0)
         {
-            contentheader = strcat(contentheader, "image/jpeg");
+            strcat(header, "image/jpeg");
         }
         else if (strcmp(ext, "gif") == 0)
         {
-            contentheader = strcat(contentheader, "image/gif");
+            strcat(header, "image/gif");
         }
         else if (strcmp(ext, "pdf") == 0)
         {
-            contentheader = strcat(contentheader, "application/pdf");
+            strcat(header, "application/pdf");
         }
         else
         {
-            contentheader = strcat(contentheader, "application/octet-stream");
+            strcat(header, "application/octet-stream");
         }
 
-        header = strcat(header, contentheader);
         header = strcat(header, "\r\n");
 
         // 6. Last-Modified
 
-        header = strcat(header, "Last-Modified: ");
+        strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtim).tv_sec;
+        time_t last_modified = (info->st_mtimespec).tv_sec;
         char *temp_buf = Rfc1123_DateTime(last_modified);
-        header = strcat(header, temp_buf);
+        strcat(header, temp_buf);
         free(temp_buf);
 
-        header = strcat(header, "\r\n");
+        strcat(header, "\r\n");
 
         free(info);
     }
+
+    printf("After 6. , header: %s\n", header);
 
     // Return a response
 
@@ -475,7 +511,11 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     response->size = strlen(final_buf);
     response->close = close;
     free(header);
-    free(content);
+    printf("Content pointer: %d\n", content);
+    if (content != NULL)
+        free(content);
+
+    printf("Just before response\n");
 
     // return header vs contents
     return response;
@@ -514,6 +554,7 @@ int send_reply(int socket_num, int main_socket_num, Response *response, Log *log
         remove_table(table, socket_num);
         num_client--;
     }
+    printf("Successfully sent reply! Close: %d\n", response->close);
 
     return SUCCESS;
 }
@@ -526,9 +567,10 @@ int main(int argc, char *argv[])
         printf("%d\n", argc);
         return -1;
     }
-    int http_port = atoi(argv[0]);
-    char *log_file = argv[1];
-    char *www_file = argv[2];
+    int http_port = atoi(argv[1]);
+    char *log_file = argv[2];
+    char *www_file = argv[3];
+    printf("%d %s %s\n", http_port, log_file, www_file);
     int sock;
     ssize_t readret;
     socklen_t cli_size;
@@ -611,12 +653,15 @@ int main(int argc, char *argv[])
                     Response *response = handle_request(NULL, log, 408, www_file);
                     if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
                     {
+                        printf("1\n");
                         free(response->buf);
                         free(response);
+                        printf("In 657\n");
                         return EXIT_FAILURE;
                     }
                     free(response->buf);
                     free(response);
+                    printf("In 662\n");
                 }
             }
             printf("Finished sending timeout responses!\n");
@@ -651,12 +696,15 @@ int main(int argc, char *argv[])
                         Response *response = handle_request(NULL, log, 503, www_file);
                         if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
                         {
+                            printf("2\n");
                             free(response->buf);
                             free(response);
+                            printf("In 699\n");
                             return EXIT_FAILURE;
                         }
                         free(response->buf);
                         free(response);
+                        printf("In 704\n");
                     }
 
                     else
@@ -736,7 +784,10 @@ int main(int argc, char *argv[])
                             }
                             // handle request
                             if (response == NULL)
+                            {
+                                printf("handling the request!\n");
                                 response = handle_request(request, log, 0, www_file);
+                            }
                         }
 
                         // printf("reaching end\n");
@@ -744,12 +795,15 @@ int main(int argc, char *argv[])
 
                         if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
                         {
+                            printf("3\n");
                             free(response->buf);
                             free(response);
+                            printf("In 797\n");
                             return EXIT_FAILURE;
                         }
                         free(response->buf);
                         free(response);
+                        printf("In 802\n");
                     }
 
                     if (readret == -1)

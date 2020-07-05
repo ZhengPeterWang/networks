@@ -82,6 +82,7 @@ int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int
         fprintf(stderr, "Error processing file\n");
         exit(0);
     }
+    printf("Finished logging!\n");
     return SUCCESS;
 }
 

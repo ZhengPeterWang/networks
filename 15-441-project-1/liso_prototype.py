@@ -8,7 +8,7 @@ import BaseHTTPServer
 import SocketServer
 
 # hard-coded configurtion
-WWW = '/tmp/www/'
+WWW = './static_site/'
 PORT = 8080
 MIME = {
             '.html' : 'text/html',
@@ -50,6 +50,8 @@ class LisoHandlerPrototype(BaseHTTPServer.BaseHTTPRequestHandler):
         # understand requested object/URI
         URI = self.path
         full_path = os.path.normpath(WWW + URI)
+        
+        print(full_path)
         
         if os.path.isdir(full_path):
             full_path = os.path.join(full_path, 'index.html')

@@ -146,7 +146,11 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         // URI to retrieve the resource
 
         strcpy(uri_buf, www_folder);
-        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
+        if (strcmp(uri_buf, "/") != 0)
+        {
+            printf("Content of buffer: %s\n", uri_buf);
+            strncat(uri_buf, request->http_uri, strlen(request->http_uri));
+        }
         printf("URI: %s\n", uri_buf);
 
         info = (struct stat *)malloc(sizeof(struct stat));
