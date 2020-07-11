@@ -131,6 +131,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         printf("Version: %s\n", request->http_version);
         code = 505;
         phrase = "HTTP Version Not Supported";
+        sz = 0;
         // version not supported. return 505.
     }
 
@@ -157,7 +158,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         info = (struct stat *)malloc(sizeof(struct stat));
 
         int n = stat(uri_buf, info);
-        printf("stat: %d", n);
+        printf("stat: %d\n", n);
 
         // check if file exists
         if (access(uri_buf, F_OK) != 0)
@@ -192,7 +193,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
         printf("URI: %s\n", uri_buf);
 
-        if (stat(uri_buf, info) == -1)
+        if (code != 404 && stat(uri_buf, info) == -1)
         {
             code = 500;
             phrase = "Internal Server Error";
@@ -204,7 +205,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
         FILE *file = fopen(uri_buf, "r");
 
-        if (file == NULL)
+        if (code != 404 && file == NULL)
         {
             code = 500;
             phrase = "Internal Server Error";
@@ -294,12 +295,19 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         // open the file and start writing to it
         FILE *file = fopen(uri_buf, "w");
 
+        printf("Request body: %s\n", request->body);
+
         if (file == NULL)
         {
             code = 500;
             phrase = "Internal Server Error";
         }
         // get the size of the file
+        else
+        {
+            code = 200;
+            phrase = "OK";
+        }
 
         if (code == 200)
         {
@@ -395,7 +403,11 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     strcat(header, "\r\n");
     strcat(header, "Connection: ");
 
-    if (code == 500 || code == 505 || code == 408 || code == 503)
+    if (request == NULL)
+    {
+        close = 1;
+    }
+    else if (code == 500 || code == 505 || code == 408 || code == 503)
     {
         // 500 error, close connection
         // 505 wrong version, close connection
@@ -485,7 +497,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
         strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtimespec).tv_sec;
+        time_t last_modified = (info->st_mtim).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         // free(temp_buf);
@@ -503,11 +515,12 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     Response *response = (Response *)malloc(sizeof(Response));
     char chr[BUF_SIZE];
+    bzero(chr, BUF_SIZE);
     sprintf(chr, "HTTP/1.1 %d %s\r\n", code, phrase);
-    char *final_buf = (char *)malloc(sz + strlen(header) + strlen(chr));
-    bzero(final_buf, sz + strlen(header) + strlen(chr));
-    strcpy(final_buf, chr);
-    strcat(final_buf, header);
+    char *final_buf = (char *)malloc(sz + strlen(header) + strlen(chr) + 1);
+    bzero(final_buf, sz + strlen(header) + strlen(chr) + 1);
+    strncpy(final_buf, chr, strlen(chr));
+    strncat(final_buf, header, strlen(header));
 
     printf("final_buf: %s\n", final_buf);
 
@@ -757,13 +770,14 @@ int main(int argc, char *argv[])
                         printf("Start parsing... \n");
                         printf("%s\n", buf);
                         request = parse(buf, strlen(buf), i);
-                        new_buf = request->body;
+
                         printf("result of request is %p\n", request);
 
                         Response *response = NULL;
 
                         if (request == NULL)
                         {
+                            new_buf = NULL;
                             response = handle_request(NULL, log, 400, www_file);
                             printf("processing request\n");
 
@@ -772,6 +786,7 @@ int main(int argc, char *argv[])
                         }
                         else
                         {
+                            new_buf = request->body;
                             if (readret == BUF_SIZE)
                             {
                                 int k, val;

@@ -213,15 +213,6 @@ request_header: token ows t_colon ows text ows t_crlf {
  *
  */
 
-body: text{
-	parsing_request->body = (char *)malloc(8192);
-	strcpy(parsing_request->body, $1);
-	// YPRINTF("body: match rule 1\n");
-} 
-| {
-	// YPRINTF("body: match rule 2\n");
-};
-
 request_headers: {
 	YPRINTF("request headers: match rule 1\n");
 }
@@ -229,7 +220,7 @@ request_headers: {
 	YPRINTF("request headers: match rule 2\n");
 };
 
-request: request_line request_headers body t_crlf{
+request: request_line request_headers t_crlf{
 	YPRINTF("parsing_request: Matched Success.\n");
 	return 0;
 };

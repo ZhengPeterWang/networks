@@ -72,6 +72,11 @@ Request *parse(char *buffer, int size, int socketFd)
 		if (yyparse() == SUCCESS)
 		{
 			printf("Parsing succeeded!\n");
+			if (i < size)
+			{
+				request->body = malloc(size - i);
+				memcpy(request->body, buffer + i, size - i);
+			}
 			return request;
 		}
 	}
