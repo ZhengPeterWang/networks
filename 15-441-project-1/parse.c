@@ -63,6 +63,7 @@ Request *parse(char *buffer, int size, int socketFd)
 	{
 		Request *request = malloc(sizeof(Request));
 		request->header_count = 0;
+		request->body = NULL;
 		//TODO You will need to handle resizing this in parser.y
 		request->headers = malloc(sizeof(Request_header) * 1);
 
@@ -74,10 +75,17 @@ Request *parse(char *buffer, int size, int socketFd)
 			printf("Parsing succeeded!\n");
 			if (i < size)
 			{
-				request->body = malloc(size - i);
+				request->body = malloc(size - i + 1);
+				bzero(request->body, size - i + 1);
 				memcpy(request->body, buffer + i, size - i);
 			}
 			return request;
+		}
+		else
+		{
+			// parsing failed
+			free(request->headers);
+			free(request);
 		}
 	}
 	//TODO Handle Malformed Requests

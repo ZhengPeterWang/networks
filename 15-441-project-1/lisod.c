@@ -34,7 +34,7 @@
 #define MAX_CLIENT FD_SETSIZE / 2
 #define _POSIX_C_SOURCE 200112L
 #define MIN(x, y) x < y ? x : y
-#define WAIT 3
+#define WAIT 10
 #define CLOSE_SOCKET_FAILURE 2
 
 int num_client = 0;
@@ -366,7 +366,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     // clear up content pointer
     if (code != 200 && content != NULL)
     {
-        // free(content);
+        free(content);
         content = NULL;
         sz = 0;
     }
@@ -394,7 +394,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     char *rfc_date = Rfc1123_DateTime(&t);
     strcat(header, rfc_date);
-    // free(rfc_date);
+    free(rfc_date);
 
     printf("Date header: %s\n", header);
 
@@ -403,7 +403,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     strcat(header, "\r\n");
     strcat(header, "Connection: ");
 
-    if (request == NULL)
+    if (code == 400)
     {
         close = 1;
     }
@@ -449,7 +449,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     sprintf(len, "%d", sz);
 
     strcat(header, len);
-    // free(len);
+    free(len);
     strcat(header, "\r\n");
 
     // 5. Content-Type
@@ -500,12 +500,13 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         time_t last_modified = (info->st_mtim).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
-        // free(temp_buf);
+        free(temp_buf);
 
         strcat(header, "\r\n");
-
-        // free(info);
     }
+
+    if (info != NULL)
+        free(info);
 
     strcat(header, "\r\n");
 
@@ -530,13 +531,15 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     }
 
     response->buf = final_buf;
-    response->size = sz + strlen(header) + strlen(chr);
+    response->size = sz;
+    response->real_size = sz + strlen(header) + strlen(chr);
+    response->code = code;
     printf("response size: %d\n", response->size);
     response->close = close;
-    // free(header);
+    free(header);
     printf("Content pointer: %d\n", content);
-    // if (content != NULL)
-    //     free(content);
+    if (content != NULL)
+        free(content);
 
     printf("Just before response\n");
 
@@ -544,18 +547,27 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     return response;
 }
 
-int send_reply(int socket_num, int main_socket_num, Response *response, Log *log, Table *table, fd_set **readfds)
+int send_reply(int socket_num, int main_socket_num, Request *request, Response *response, Log *log, Table *table, fd_set **readfds)
 {
     struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, socket_num);
     char *addr = inet_ntoa(new_addr->sin_addr);
 
     printf("Sending reply to socket %d with main socket %d\n", socket_num, main_socket_num);
 
-    access_log(log, addr, "", response->buf, response->size, strlen(response->buf));
+    char *request_digest = malloc(BUF_SIZE);
+    bzero(request_digest, BUF_SIZE);
+    if (request != NULL)
+        sprintf(request_digest, "%s %s %s", request->http_method, request->http_uri, request->http_version);
+    else
+        sprintf(request_digest, "CANNOT RECOGNIZE THIS REQUEST");
 
-    int num = send(socket_num, response->buf, response->size, 0);
+    access_log(log, addr, "", request_digest, response->code, response->size);
 
-    if (num != response->size)
+    free(request_digest);
+
+    int num = send(socket_num, response->buf, response->real_size, 0);
+
+    if (num != response->real_size)
     {
         close_socket(socket_num);
         close_socket(main_socket_num);
@@ -584,6 +596,18 @@ int send_reply(int socket_num, int main_socket_num, Response *response, Log *log
         num_client--;
     }
     printf("Successfully sent reply! Close: %d\n", response->close);
+
+    // free up the request
+    if (request != NULL)
+    {
+        if (request->body != NULL)
+            free(request->body);
+        if (request->headers != NULL)
+        {
+            free(request->headers);
+        }
+        free(request);
+    }
 
     return SUCCESS;
 }
@@ -670,6 +694,8 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         }
 
+        free(timeout);
+
         // handling timeout
 
         if (select_val == 0)
@@ -681,24 +707,24 @@ int main(int argc, char *argv[])
                     printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
                     Response *response = handle_request(NULL, log, 408, www_file);
-                    int k = send_reply(i, sock, response, log, table, &readfds);
+                    int k = send_reply(i, sock, NULL, response, log, table, &readfds);
                     if (k == EXIT_FAILURE)
                     {
                         printf("1\n");
-                        // free(response->buf);
-                        // free(response);
+                        free(response->buf);
+                        free(response);
                         printf("In 657\n");
                         return EXIT_FAILURE;
                     }
                     else if (k == CLOSE_SOCKET_FAILURE)
                     {
                         printf("2\n");
-                        // free(response->buf);
-                        // free(response);
+                        free(response->buf);
+                        free(response);
                         printf("In 657\n");
                     }
-                    // free(response->buf);
-                    // free(response);
+                    free(response->buf);
+                    free(response);
                     printf("In 662\n");
                 }
             }
@@ -732,16 +758,17 @@ int main(int argc, char *argv[])
                     if (num_client == MAX_CLIENT)
                     {
                         Response *response = handle_request(NULL, log, 503, www_file);
-                        if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                        insert_table(table, i, temp_addr);
+                        if (send_reply(i, sock, NULL, response, log, table, &readfds) == EXIT_FAILURE)
                         {
                             printf("2\n");
-                            // free(response->buf);
-                            // free(response);
+                            free(response->buf);
+                            free(response);
                             printf("In 699\n");
                             return EXIT_FAILURE;
                         }
-                        // free(response->buf);
-                        // free(response);
+                        free(response->buf);
+                        free(response);
                         printf("In 704\n");
                     }
 
@@ -834,16 +861,16 @@ int main(int argc, char *argv[])
                         // printf("reaching end\n");
                         // memset(buf, 0, BUF_SIZE);
 
-                        if (send_reply(i, sock, response, log, table, &readfds) == EXIT_FAILURE)
+                        if (send_reply(i, sock, request, response, log, table, &readfds) == EXIT_FAILURE)
                         {
                             printf("3\n");
-                            // free(response->buf);
-                            // free(response);
+                            free(response->buf);
+                            free(response);
                             printf("In 797\n");
                             return EXIT_FAILURE;
                         }
-                        // free(response->buf);
-                        // free(response);
+                        free(response->buf);
+                        free(response);
                         printf("In 802\n");
                     }
 

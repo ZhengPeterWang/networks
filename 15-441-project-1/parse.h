@@ -25,7 +25,9 @@ typedef struct
 typedef struct
 {
 	char *buf;
+	int code;
 	ssize_t size;
+	ssize_t real_size;
 	int close; // 0 close, 1 not close
 } Response;
 

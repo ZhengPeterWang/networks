@@ -10,6 +10,7 @@
 
 #define SUCCESS 0
 #define LOG_FAILURE 2;
+#define MIN(x, y) x < y ? x : y
 
 //Header field
 typedef struct

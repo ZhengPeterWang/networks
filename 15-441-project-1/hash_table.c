@@ -71,8 +71,8 @@ void remove_table(Table *t, int key)
                 pre_temp->next = temp->next;
             else
                 t->list[pos] = temp->next;
-            // free(temp->val);
-            // free(temp);
+            free(temp->val);
+            free(temp);
             return;
         }
         pre_temp = temp;

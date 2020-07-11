@@ -1,5 +1,6 @@
 #include <log.h>
 #define SIZE 1024
+#define DIGEST_SIZE 100
 
 Log *log_init_default(const char *file)
 {
@@ -44,13 +45,15 @@ int error_log(Log *log, char *ip_buf, const char *err_msg)
 
     strftime(new_time, SIZE, "%d/%b/%Y:%H:%M:%S %z", tt);
     sprintf(first_buf, "[%s] [error] [client %s] %s\n", new_time, ip_buf, err_msg);
-
+    free(new_time);
     int err_num;
     if ((err_num = write_log(log, first_buf)) != SUCCESS)
     {
         fprintf(stderr, "Error processing file\n");
         exit(0);
     }
+
+    free(first_buf);
     return SUCCESS;
 }
 
@@ -82,6 +85,8 @@ int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int
         fprintf(stderr, "Error processing file\n");
         exit(0);
     }
+    free(first_buf);
+    free(new_time);
     printf("Finished logging!\n");
     return SUCCESS;
 }
@@ -117,7 +122,7 @@ int close_log(Log *log)
         fprintf(stderr, "Error closing file with error number %d.\n", err_num);
         return LOG_FAILURE;
     }
-    // free(log->header);
-    // free(log);
+    free(log->header);
+    free(log);
     return SUCCESS;
 }
