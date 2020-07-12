@@ -1,0 +1,14 @@
+127.0.0.1 -  [10/Jul/2020:22:22:14 -0400] "HTTP/1.1 505 HTTP Version Not Supported
+Date: Sat, 11 Jul 2020 02:22:14 GMT
+Connection: close
+Server: Liso/1.0
+Content-Length: 0
+
+" 136 136
+127.0.0.1 -  [10/Jul/2020:22:22:40 -0400] "HTTP/1.1 501 Not Implemented
+Date: Sat, 11 Jul 2020 02:22:40 GMT
+Connection: keep-alive
+Server: Liso/1.0
+Content-Length: 0
+
+" 130 130

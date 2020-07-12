@@ -1,0 +1,41 @@
+CONTENT_LENGTH -- taken directly from request
+CONTENT_TYPE -- taken directly from request
+GATEWAY_INTERFACE -- "CGI/1.1"
+PATH_INFO -- <path> component of URI
+
+QUERY_STRING -- parsed from URI as everything after ?:
+
+        However, a subset of URI do share a common syntax for
+        representing hierarchical relationships within the namespace.  This
+        "generic URI" syntax consists of a sequence of four main components:
+
+                <scheme>://<authority><path>?<query>
+
+        each of which, except <scheme>, may be absent from a particular URI.
+        For example, some URI schemes do not allow an <authority> component,
+        and others do not use a <query> component.
+
+Example: /cgi/testfun/arg1/arg2/arg3?test=test
+
+    --> PATH_INFO = /testfun/arg1/arg2/arg3 [trailing slashes matter]
+    --> REQUEST_URI = /cgi/testfun/arg1/arg2/arg3
+    --> QUERY_STRING = test=test
+    --> SCRIPT_NAME = /cgi [hard-coded] 
+
+REMOTE_ADDR -- taken when accept() call is made
+REQUEST_METHOD -- taken directly from request
+REQUEST_URI -- taken directly from request
+SCRIPT_NAME -- hard-coded/configured application name (virtual path) 
+SERVER_PORT -- as configured from command line (HTTP or HTTPS port depending)
+SERVER_PROTOCOL -- "HTTP/1.1"
+SERVER_SOFTWARE -- "Liso/1.0"
+HTTP_ACCEPT -- taken directly from request
+HTTP_REFERER -- taken directly from request
+HTTP_ACCEPT_ENCODING -- taken directly from request
+HTTP_ACCEPT_LANGUAGE -- taken directly from request
+HTTP_ACCEPT_CHARSET -- taken directly from request
+HTTP_HOST -- taken directly from request
+HTTP_COOKIE -- taken directly from request
+HTTP_USER_AGENT -- taken directly from request
+HTTP_CONNECTION -- taken directly from request
+HTTP_HOST -- taken directly from request
