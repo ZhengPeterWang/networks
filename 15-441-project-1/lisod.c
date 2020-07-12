@@ -31,7 +31,7 @@
 #define BUF_SIZE 8192
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
-#define MAX_CLIENT FD_SETSIZE / 2
+#define MAX_CLIENT FD_SETSIZE
 #define _POSIX_C_SOURCE 200112L
 #define MIN(x, y) x < y ? x : y
 #define WAIT 10
@@ -288,72 +288,67 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
     else if (strcmp(request->http_method, "POST") == 0)
     {
-        // parse the address of the uri
-        strcpy(uri_buf, www_folder);
-        strncat(uri_buf, request->http_uri, strlen(request->http_uri));
 
-        // open the file and start writing to it
-        FILE *file = fopen(uri_buf, "w");
-
-        printf("Request body: %s\n", request->body);
-
-        if (file == NULL)
+        // check if header contains content-length
+        int k;
+        int val = 0;
+        for (k = 0; k < request->header_count; ++k)
         {
-            code = 500;
-            phrase = "Internal Server Error";
+            Request_header header = request->headers[k];
+            if (strcmp(header.header_name, "Content-Length") == 0)
+            {
+                val = atoi(header.header_value);
+                break;
+            }
         }
-        // get the size of the file
+        // return 411 if content-length is not in the header
+        if (k == request->header_count)
+        {
+            code = 411;
+            phrase = "Length Required";
+        }
         else
         {
-            code = 200;
-            phrase = "OK";
-        }
+            // parse the address of the uri
+            strcpy(uri_buf, www_folder);
+            strncat(uri_buf, request->http_uri, strlen(request->http_uri));
 
-        if (code == 200)
-        {
-            // start to process the request!
-            if (fseek(file, 0L, SEEK_END) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (code == 200)
-        {
-            sz = ftell(file);
-            if (sz == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
-        if (code == 200)
-        {
-            if (fseek(file, 0L, SEEK_SET) == -1)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
-        }
+            // open the file and start writing to it
+            FILE *file = fopen(uri_buf, "w");
 
-        // put the body into the file!
-        if (code == 200)
-        {
-            char *body = request->body;
+            printf("Request body: %s\n", request->body);
 
-            // put the stuff!
-            if (fputs(body, file) < 0)
+            if (file == NULL)
             {
                 code = 500;
                 phrase = "Internal Server Error";
             }
+            // get the size of the file
+            else
+            {
+                code = 200;
+                phrase = "OK";
+            }
+
+            // put the body into the file!
+            if (code == 200)
+            {
+                char *body = request->body;
+
+                // put the stuff!
+                if (fwrite(body, 1, val, file) != val)
+                {
+                    code = 500;
+                    phrase = "Internal Server Error";
+                }
+            }
+            if (file != NULL)
+                if (fclose(file) != 0)
+                {
+                    code = 500;
+                    phrase = "Internal Server Error";
+                }
         }
-        if (file != NULL)
-            if (fclose(file) != 0)
-            {
-                code = 500;
-                phrase = "Internal Server Error";
-            }
     }
 
     // for all other methods, return 501.
@@ -414,8 +409,14 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         // 408 timeout
         close = 0;
     }
+    else if (request == NULL)
+    {
+        close = 1;
+        printf("SHould never happen! code: %d\n", code);
+    }
     else
     {
+        printf("request:%d\n", request);
         Request_header *tmp = request->headers;
         for (int i = 0; i < request->header_count; i++)
         {
@@ -628,10 +629,10 @@ int main(int argc, char *argv[])
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr;
-    char buf[BUF_SIZE];
-    memset(buf, 0, BUF_SIZE);
+    char buf[BUF_SIZE + 10];
+    bzero(buf, BUF_SIZE + 10);
 
-    fprintf(stdout, "----- Echo Server -----\n");
+    fprintf(stdout, "----- Liso Server v1.0 -----\n");
 
     Log *log = log_init_default(log_file);
 
@@ -829,11 +830,13 @@ int main(int argc, char *argv[])
                                 if (k == request->header_count)
                                 {
                                     // send a response of 411
+                                    printf("DID NOT SEE CONTENT LENGTH!\n");
                                     response = handle_request(NULL, log, 411, www_file);
                                 }
                                 else
                                 {
-                                    new_buf = realloc(new_buf, val);
+                                    new_buf = realloc(new_buf, val + 1);
+                                    new_buf[val] = 0;
                                     // TODO check if strlen(new_buf) is the correct starting point
                                     for (k = strlen(new_buf); k < val; k += BUF_SIZE)
                                     {

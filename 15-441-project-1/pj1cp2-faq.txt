@@ -117,7 +117,7 @@ Checkpoint 2
       Don't try sending the whole file at once---although that might
       be more realistic in practice.
 
-(13) Are we allowed to reject requests with headers beyond a maximum size?
+* (13) Are we allowed to reject requests with headers beyond a maximum size?
 
       Yes, you may reject any header > 8192 bytes.  However, you must
       find and parse the next request properly for pipelining

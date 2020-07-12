@@ -45,7 +45,6 @@ BAD_REQUEST_RESPONSE = 'HTTP/1.1 400 Bad Request\r\n'
 for i in xrange(numTrials):
     socketSubset = []
     randomData = []
-    randomLen = []
     socketSubset = random.sample(socketList, numConnections)
     for j in xrange(numWritesReads):
         random_index = random.randrange(len(GOOD_REQUESTS)  + len(BAD_REQUESTS))
@@ -53,29 +52,24 @@ for i in xrange(numTrials):
         print(socketSubset[j].getsockname())
         if random_index < len(GOOD_REQUESTS):
             random_string = GOOD_REQUESTS[random_index]
-            randomLen.append(len(random_string))
             randomData.append(random_string)
         else:
             random_string = BAD_REQUESTS[random_index - len(GOOD_REQUESTS)]
-            randomLen.append(len(BAD_REQUEST_RESPONSE))
             randomData.append(BAD_REQUEST_RESPONSE)
         socketSubset[j].send(random_string)
 
     for j in xrange(numWritesReads):
         print(j)
-        data = socketSubset[j].recv(randomLen[j])
+        data = socketSubset[j].recv(8192)
         start_time = time.time()
         while True:
-            if len(data) == randomLen[j]:
+            if len(data) <> 8192:
                 break
             socketSubset[j].settimeout(RECV_EACH_TIMEOUT)
-            data += socketSubset[j].recv(randomLen[j])
+            data += socketSubset[j].recv(8192)
             if time.time() - start_time > RECV_TOTAL_TIMEOUT:
                 break
-        if data != randomData[j]:
-            print("received: ",data, "original: ",randomData[j])
-            sys.stderr.write("Error: Data received is not the same as sent! \n")
-            sys.exit(1)
+        print("received: ",data, "original: ",randomData[j])
 
 for i in xrange(numConnections):
     socketList[i].close()
