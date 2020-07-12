@@ -9,7 +9,9 @@
 #include <unistd.h>
 
 #define SUCCESS 0
-#define LOG_FAILURE 2;
+#define LOG_FAILURE 2
+#define SIZE 1024
+#define DIGEST_SIZE 100
 #define MIN(x, y) x < y ? x : y
 
 //Header field
@@ -24,11 +26,13 @@ typedef struct
 typedef struct
 {
     Log_header *header;
-    FILE *file;
+    const char *file;
 
 } Log;
 
 Log *log_init_default(const char *file_name);
+
+void log_refresh(Log *log);
 
 int write_log(Log *log, const char *buf);
 

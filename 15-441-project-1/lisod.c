@@ -1,10 +1,9 @@
 /******************************************************************************
-* echo_server.c                                                               *
+* lisod.c                                                                     *
 *                                                                             *
-* Description: This file contains the C source code for an echo server.  The  *
-*              server runs on a hard-coded port and simply write back anything*
-*              sent to it by connected clients.  It does not support          *
-*              concurrent clients.                                            *
+* Description: This file contains the C source code for an liso server.  The  *
+*              server runs on a user-coded port and offers simple HTTP        *
+*              requests.  It supports concurrent clients.                     *
 *                                                                             *
 * Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                         *
 *          Wolf Richter <wolf@cs.cmu.edu>                                     *
@@ -23,9 +22,12 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
+#include <syslog.h>
+#include <sys/types.h>
 
-#include "parse.h"
 #include "log.h"
+#include "parse.h"
 #include "hash_table.h"
 
 #define BUF_SIZE 8192
@@ -34,19 +36,118 @@
 #define MAX_CLIENT FD_SETSIZE
 #define _POSIX_C_SOURCE 200112L
 #define MIN(x, y) x < y ? x : y
-#define WAIT 10
+#define WAIT 1
 #define CLOSE_SOCKET_FAILURE 2
 
 int num_client = 0;
+int sock = 0;
+int client_sock = 0;
 
-int close_socket(int sock)
+/***** Daemonize code *****/
+
+int close_socket_client()
+{
+    if (close(client_sock))
+    {
+        fprintf(stderr, "Failed closing socket. %d\n", client_sock);
+        return 1;
+    }
+    client_sock = 0;
+    return 0;
+}
+
+int close_socket_main()
 {
     if (close(sock))
     {
         fprintf(stderr, "Failed closing socket. %d\n", sock);
         return 1;
     }
+    sock = 0;
     return 0;
+}
+
+void lisod_shutdown(int ret)
+{
+    if (client_sock != 0)
+        close_socket_client();
+    if (sock != 0)
+        close_socket_main();
+    exit(ret);
+}
+
+/**
+ * internal signal handler
+ */
+void signal_handler(int sig)
+{
+    switch (sig)
+    {
+    case SIGHUP:
+        /* rehash the server */
+        printf("handling sighup!\n");
+
+        break;
+    case SIGTERM:
+        /* finalize and shutdown the server */
+        printf("handling sigterm!\n");
+        lisod_shutdown(EXIT_SUCCESS);
+        break;
+    default:
+        printf("handling signal %d\n", sig);
+        break;
+        /* unhandled signal */
+    }
+}
+
+/** 
+ * internal function daemonizing the process
+ */
+int daemonize(char *lock_file, Log *log)
+{
+    printf("Starting to daemonize\n");
+    /* drop to having init() as parent */
+    int i, lfp, pid = fork();
+    char str[256] = {0};
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+
+    setsid();
+
+    for (i = getdtablesize(); i >= 0; i--)
+        close(i);
+
+    i = open("/dev/null", O_RDWR);
+    dup(i); /* stdout */
+    dup(i); /* stderr */
+    umask(027);
+
+    lfp = open(lock_file, O_RDWR | O_CREAT, 0640);
+
+    if (lfp < 0)
+        exit(EXIT_FAILURE); /* can not open */
+
+    if (lockf(lfp, F_TLOCK, 0) < 0)
+        exit(EXIT_SUCCESS); /* can not lock */
+
+    /* only first instance continues */
+    sprintf(str, "%d\n", getpid());
+    write(lfp, str, strlen(str)); /* record pid to lockfile */
+
+    signal(SIGCHLD, SIG_IGN); /* child terminate signal */
+
+    signal(SIGHUP, signal_handler);  /* hangup signal */
+    signal(SIGTERM, signal_handler); /* software termination signal from kill */
+
+    // log --> "Successfully daemonized lisod process, pid %d."
+    char *digest = malloc(SIZE);
+    sprintf(digest, "Successfully daemonized lisod process, pid %d\n", getpid());
+    write_log(log, digest);
+    free(digest);
+
+    return EXIT_SUCCESS;
 }
 
 static const char *DAY_NAMES[] =
@@ -416,7 +517,6 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     }
     else
     {
-        printf("request:%d\n", request);
         Request_header *tmp = request->headers;
         for (int i = 0; i < request->header_count; i++)
         {
@@ -535,10 +635,9 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     response->size = sz;
     response->real_size = sz + strlen(header) + strlen(chr);
     response->code = code;
-    printf("response size: %d\n", response->size);
+    printf("response size: %ld\n", response->size);
     response->close = close;
     free(header);
-    printf("Content pointer: %d\n", content);
     if (content != NULL)
         free(content);
 
@@ -570,8 +669,8 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
 
     if (num != response->real_size)
     {
-        close_socket(socket_num);
-        close_socket(main_socket_num);
+        close_socket_client();
+        close_socket_main();
         printf("send num: %d, errno: %d\n", num, errno);
         error_log(log, addr, "Error sending to client.\n");
         return EXIT_FAILURE;
@@ -586,9 +685,9 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
     // While the third happens, we would send client a close notice
     if (response->close == 0)
     {
-        if (close_socket(socket_num))
+        if (close_socket_client())
         {
-            close_socket(main_socket_num);
+            close_socket_main();
             error_log(log, "", "Error closing client socket.\n");
             return CLOSE_SOCKET_FAILURE;
         }
@@ -615,26 +714,30 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
 
 int main(int argc, char *argv[])
 {
-    if (argc != 4)
+    if (argc != 5)
     {
-        printf("Usage: ./lisod [HTTP Port] [log file] [www file]\n");
+        printf("Usage: ./lisod [HTTP Port] [log file] [lock file] [www file]\n");
         printf("%d\n", argc);
         return -1;
     }
     int http_port = atoi(argv[1]);
     char *log_file = argv[2];
-    char *www_file = argv[3];
-    printf("%d %s %s\n", http_port, log_file, www_file);
-    int sock;
+    char *lock_file = argv[3];
+    char *www_file = argv[4];
+    printf("%d %s %s %s\n", http_port, log_file, lock_file, www_file);
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr;
     char buf[BUF_SIZE + 10];
     bzero(buf, BUF_SIZE + 10);
 
-    fprintf(stdout, "----- Liso Server v1.0 -----\n");
-
     Log *log = log_init_default(log_file);
+
+    daemonize(lock_file, log);
+
+    log_refresh(log);
+
+    fprintf(stdout, "----- Liso Server v1.0 -----\n");
 
     Table *table = create_table(TABLE_SIZE);
 
@@ -652,14 +755,14 @@ int main(int argc, char *argv[])
     /* servers bind sockets to ports---notify the OS they accept connections */
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
-        close_socket(sock);
+        close_socket_main();
         error_log(log, "", "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
 
     if (listen(sock, 5))
     {
-        close_socket(sock);
+        close_socket_main();
         error_log(log, "", "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
@@ -789,6 +892,10 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
+
+                    // handle client sock
+                    client_sock = i;
+
                     Request *request = NULL;
                     char *new_buf;
 
@@ -797,6 +904,7 @@ int main(int argc, char *argv[])
                     {
                         printf("Start parsing... \n");
                         printf("%s\n", buf);
+                        printf("size: %d\n", strlen(buf));
                         request = parse(buf, strlen(buf), i);
 
                         printf("result of request is %p\n", request);
@@ -879,16 +987,16 @@ int main(int argc, char *argv[])
 
                     if (readret == -1)
                     {
-                        close_socket(i);
-                        close_socket(sock);
+                        close_socket_client();
+                        close_socket_main();
                         error_log(log, "", "Error reading from client socket.\n");
                         return EXIT_FAILURE;
                     }
                     if (readret == 0)
                     {
-                        if (close_socket(i))
+                        if (close_socket_client())
                         {
-                            close_socket(sock);
+                            close_socket_main();
                             error_log(log, "", "Error closing client socket.\n");
                             return EXIT_FAILURE;
                         }
@@ -904,7 +1012,7 @@ int main(int argc, char *argv[])
 
     printf("Token\n");
 
-    close_socket(sock);
+    close_socket_main();
 
     return EXIT_SUCCESS;
 }

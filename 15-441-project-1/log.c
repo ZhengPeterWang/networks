@@ -1,6 +1,4 @@
 #include <log.h>
-#define SIZE 1024
-#define DIGEST_SIZE 100
 
 Log *log_init_default(const char *file)
 {
@@ -11,26 +9,26 @@ Log *log_init_default(const char *file)
 
     Log *log = (Log *)malloc(sizeof(Log));
     log->header = log_header;
-    log->file = fopen(file, "w");
+    log->file = file;
 
-    if (file == NULL)
+    return log;
+}
+
+void log_refresh(Log *log)
+{
+    FILE *file_ptr;
+
+    // testing whether we can open or close the log
+    if ((file_ptr = fopen(log->file, "w")) == NULL)
     {
         fprintf(stderr, "Error opening file.\n");
         return NULL;
     }
-
-    // const char *first_buf;
-
-    // sprintf(first_buf, "Liso server v 0.2!~ (゜-゜)つロ\n %t, %ld\n", log_header->time, (long)log_header->pid);
-
-    // int err_num;
-    // if ((err_num = write_log(log, first_buf)) != SUCCESS)
-    // {
-    //     fprintf(stderr, "Error processing file %s\n", log->file_name);
-    //     return NULL;
-    // }
-
-    return log;
+    if (fclose(file_ptr) != 0)
+    {
+        fprintf(stderr, "Error opening file.\n");
+        return NULL;
+    }
 }
 
 int error_log(Log *log, char *ip_buf, const char *err_msg)
@@ -93,7 +91,7 @@ int access_log(Log *log, char *ip_buf, const char *usr, const char *request, int
 
 int write_log(Log *log, const char *buf)
 {
-    FILE *file = log->file;
+    FILE *file = fopen(log->file, "a");
     if (file == NULL)
     {
         fprintf(stderr, "Error opening file.\n");
@@ -110,12 +108,17 @@ int write_log(Log *log, const char *buf)
         fprintf(stderr, "Error flushing file with error number %d.\n", err_num);
         return LOG_FAILURE;
     }
+    if ((err_num = fclose(file)) != 0)
+    {
+        fprintf(stderr, "Error closing file with error number %d.\n", err_num);
+        return LOG_FAILURE;
+    }
     return SUCCESS;
 }
 
 int close_log(Log *log)
 {
-    FILE *file = log->file;
+    FILE *file = fopen(log->file, "w");
     int err_num;
     if ((err_num = fclose(file)) != 0)
     {
