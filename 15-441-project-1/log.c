@@ -22,12 +22,12 @@ void log_refresh(Log *log)
     if ((file_ptr = fopen(log->file, "w")) == NULL)
     {
         fprintf(stderr, "Error opening file.\n");
-        return NULL;
+        return;
     }
     if (fclose(file_ptr) != 0)
     {
         fprintf(stderr, "Error opening file.\n");
-        return NULL;
+        return;
     }
 }
 

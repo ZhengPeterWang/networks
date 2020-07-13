@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -28,7 +29,7 @@ int close_socket(int sock)
     return 0;
 }
 
-int main(char* argv[], int argc)
+int main(char *argv[], int argc)
 {
 
     /************ VARIABLE DECLARATIONS ************/
@@ -52,7 +53,7 @@ int main(char* argv[], int argc)
     }
 
     /* register private key */
-    if (SSL_CTX_use_PrivateKey_file(ssl_context, "../private/wolf.key",
+    if (SSL_CTX_use_PrivateKey_file(ssl_context, "../private/mynewkey.key",
                                     SSL_FILETYPE_PEM) == 0)
     {
         SSL_CTX_free(ssl_context);
@@ -61,7 +62,7 @@ int main(char* argv[], int argc)
     }
 
     /* register public key (certificate) */
-    if (SSL_CTX_use_certificate_file(ssl_context, "../certs/wolf.crt",
+    if (SSL_CTX_use_certificate_file(ssl_context, "../certs/mynewkey.crt",
                                      SSL_FILETYPE_PEM) == 0)
     {
         SSL_CTX_free(ssl_context);
@@ -82,7 +83,7 @@ int main(char* argv[], int argc)
     addr.sin_port = htons(ECHO_PORT);
     addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
         close_socket(sock);
         SSL_CTX_free(ssl_context);
@@ -103,8 +104,8 @@ int main(char* argv[], int argc)
     while (1)
     {
         cli_size = sizeof(cli_addr);
-        if ((client_sock = accept(sock, (struct sockaddr *) &cli_addr,
-             &cli_size)) == -1)
+        if ((client_sock = accept(sock, (struct sockaddr *)&cli_addr,
+                                  &cli_size)) == -1)
         {
             close(sock);
             SSL_CTX_free(ssl_context);
@@ -128,7 +129,7 @@ int main(char* argv[], int argc)
             SSL_CTX_free(ssl_context);
             fprintf(stderr, "Error creating client SSL context.\n");
             return EXIT_FAILURE;
-        }  
+        }
 
         if (SSL_accept(client_context) <= 0)
         {
@@ -142,7 +143,7 @@ int main(char* argv[], int argc)
 
         readret = 0;
 
-        while((readret = SSL_read(client_context, buf, BUF_SIZE)) > 0)
+        while ((readret = SSL_read(client_context, buf, BUF_SIZE)) > 0)
         {
             if (SSL_write(client_context, buf, readret) != readret)
             {
@@ -155,7 +156,7 @@ int main(char* argv[], int argc)
                 return EXIT_FAILURE;
             }
             memset(buf, 0, BUF_SIZE);
-        } 
+        }
 
         if (readret < 0)
         {
@@ -179,7 +180,6 @@ int main(char* argv[], int argc)
         }
     }
     /************ END SINGLE CLIENT ECHO LOOP ************/
-
 
     SSL_CTX_free(ssl_context);
     close_socket(sock);

@@ -34,14 +34,17 @@
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
-#define _POSIX_C_SOURCE 200112L
 #define MIN(x, y) x < y ? x : y
+#define MAX(x, y) x < y ? y : x
 #define WAIT 1
 #define CLOSE_SOCKET_FAILURE 2
 
 int num_client = 0;
 int sock = 0;
 int client_sock = 0;
+int https_sock = 0;
+Table *table;
+SSL_CTX *ssl_context;
 
 /***** Daemonize code *****/
 
@@ -67,12 +70,28 @@ int close_socket_main()
     return 0;
 }
 
+int close_socket_https()
+{
+    if (close(https_sock))
+    {
+        fprintf(stderr, "Failed closing socket. %d\n", https_sock);
+        return 1;
+    }
+    https_sock = 0;
+    return 0;
+}
+
 void lisod_shutdown(int ret)
 {
     if (client_sock != 0)
         close_socket_client();
     if (sock != 0)
         close_socket_main();
+    if (https_sock != 0)
+        close_socket_https();
+    remove_all_entries_in_table(table);
+    if (ssl_context != NULL)
+        SSL_CTX_free(ssl_context);
     exit(ret);
 }
 
@@ -647,12 +666,20 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     return response;
 }
 
-int send_reply(int socket_num, int main_socket_num, Request *request, Response *response, Log *log, Table *table, fd_set **readfds)
+int send_reply(Request *request, Response *response, Log *log, Table *table, fd_set **readfds, int mode)
 {
+    int socket_num = client_sock;
+
+    // check which connection it is from the table!
+
+    int main_socket_num = lookup_table_connection(table, client_sock);
+
     struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, socket_num);
     char *addr = inet_ntoa(new_addr->sin_addr);
 
     printf("Sending reply to socket %d with main socket %d\n", socket_num, main_socket_num);
+
+    // log correctly the request!
 
     char *request_digest = malloc(BUF_SIZE);
     bzero(request_digest, BUF_SIZE);
@@ -665,18 +692,28 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
 
     free(request_digest);
 
-    int num = send(socket_num, response->buf, response->real_size, 0);
+    // send depending on the mode
+    int num;
+    if (mode == 0)
+    {
+        num = send(socket_num, response->buf, response->real_size, 0);
+    }
+    else if (mode == 1)
+    {
+        printf("real size: %ld\n", response->real_size);
+        num = SSL_write(lookup_table_context(table, client_sock), response->buf, response->real_size);
+    }
 
     if (num != response->real_size)
     {
-        close_socket_client();
-        close_socket_main();
+        //  securely delete context
         printf("send num: %d, errno: %d\n", num, errno);
+        if (mode == 1)
+            printf("Error indicator:%d\n", SSL_get_error(lookup_table_context(table, client_sock), num));
         error_log(log, addr, "Error sending to client.\n");
+        lisod_shutdown(EXIT_FAILURE);
         return EXIT_FAILURE;
     }
-
-    // TODO log correctly the request!
 
     // close socket
     // 1. When connection closes
@@ -688,6 +725,8 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
         if (close_socket_client())
         {
             close_socket_main();
+            close_socket_https();
+            remove_all_entries_in_table(table);
             error_log(log, "", "Error closing client socket.\n");
             return CLOSE_SOCKET_FAILURE;
         }
@@ -712,19 +751,33 @@ int send_reply(int socket_num, int main_socket_num, Request *request, Response *
     return SUCCESS;
 }
 
+int receive(int i, char *buf, SSL *client_context)
+{
+    if (client_context == NULL)
+        return recv(i, buf, BUF_SIZE, 0);
+    else
+        return SSL_read(client_context, buf, BUF_SIZE);
+}
+
 int main(int argc, char *argv[])
 {
-    if (argc != 5)
+    if (argc != 8)
     {
-        printf("Usage: ./lisod [HTTP Port] [log file] [lock file] [www file]\n");
+        printf("Usage: ./lisod [HTTP Port] [HTTPS Port] [log file] [lock file] "
+               "[www file] [private key file] [certificate file]\n");
         printf("%d\n", argc);
         return -1;
     }
+    SSL *client_context;
     int http_port = atoi(argv[1]);
-    char *log_file = argv[2];
-    char *lock_file = argv[3];
-    char *www_file = argv[4];
-    printf("%d %s %s %s\n", http_port, log_file, lock_file, www_file);
+    int https_port = atoi(argv[2]);
+    char *log_file = argv[3];
+    char *lock_file = argv[4];
+    char *www_file = argv[5];
+    char *private_key_file = argv[6];
+    char *cert_file = argv[7];
+    printf("%d %d %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
+           www_file, private_key_file, cert_file);
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr;
@@ -733,13 +786,40 @@ int main(int argc, char *argv[])
 
     Log *log = log_init_default(log_file);
 
-    daemonize(lock_file, log);
+    // daemonize(lock_file, log);
 
     log_refresh(log);
 
+    /************ SSL INIT ************/
+    SSL_load_error_strings();
+    SSL_library_init();
+
+    if ((ssl_context = SSL_CTX_new(TLS_server_method())) == NULL)
+    {
+        error_log(log, "", "Error creating SSL context.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* register private key */
+    if (SSL_CTX_use_PrivateKey_file(ssl_context, private_key_file, SSL_FILETYPE_PEM) == 0)
+    {
+        SSL_CTX_free(ssl_context);
+        error_log(log, "", "Error associating private key.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* register public key (certificate) */
+    if (SSL_CTX_use_certificate_file(ssl_context, cert_file, SSL_FILETYPE_PEM) == 0)
+    {
+        SSL_CTX_free(ssl_context);
+        error_log(log, "", "Error associating certificate.\n");
+        return EXIT_FAILURE;
+    }
+    /************ END SSL INIT ************/
+
     fprintf(stdout, "----- Liso Server v1.0 -----\n");
 
-    Table *table = create_table(TABLE_SIZE);
+    /************ CREATE HTTP SERVER ************/
 
     /* all networked programs must create a socket */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
@@ -756,6 +836,7 @@ int main(int argc, char *argv[])
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)))
     {
         close_socket_main();
+        SSL_CTX_free(ssl_context);
         error_log(log, "", "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
@@ -763,15 +844,56 @@ int main(int argc, char *argv[])
     if (listen(sock, 5))
     {
         close_socket_main();
+        SSL_CTX_free(ssl_context);
         error_log(log, "", "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
 
+    /************ END CREATE HTTP SERVER ************/
+
+    /************ CREATE HTTPS SERVER ************/
+
+    if ((https_sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
+    {
+        SSL_CTX_free(ssl_context);
+        close_socket_main();
+        error_log(log, "", "Failed creating HTTPS socket.\n");
+        return EXIT_FAILURE;
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(https_port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(https_sock, (struct sockaddr *)&addr, sizeof(addr)))
+    {
+        close_socket_https();
+        close_socket_main();
+        SSL_CTX_free(ssl_context);
+        error_log(log, "", "Failed binding HTTPS socket.\n");
+        return EXIT_FAILURE;
+    }
+
+    if (listen(https_sock, 5))
+    {
+        close_socket_https();
+        close_socket_main();
+        SSL_CTX_free(ssl_context);
+        error_log(log, "", "Error listening on HTTPS socket.\n");
+        return EXIT_FAILURE;
+    }
+
+    /************ END CREATE HTTPS SERVER ************/
+
+    /************ MAIN LOOP ************/
+    table = create_table(TABLE_SIZE);
+
     fd_set *readfds = malloc(sizeof(fd_set));
-    int max_sd = sock;
+    int max_sd = MAX(sock, https_sock);
 
     FD_ZERO(readfds);
     FD_SET(sock, readfds);
+    FD_SET(https_sock, readfds);
 
     /* finally, loop waiting for input and then write it back */
     while (1)
@@ -793,8 +915,8 @@ int main(int argc, char *argv[])
 
         if ((select_val = select(max_sd + 1, &newfds, NULL, NULL, timeout)) < 0)
         {
-            close(sock);
             error_log(log, "", "Error select.\n");
+            lisod_shutdown(EXIT_FAILURE);
             return EXIT_FAILURE;
         }
 
@@ -810,8 +932,9 @@ int main(int argc, char *argv[])
                 {
                     printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
+                    client_sock = i;
                     Response *response = handle_request(NULL, log, 408, www_file);
-                    int k = send_reply(i, sock, NULL, response, log, table, &readfds);
+                    int k = send_reply(NULL, response, log, table, &readfds, 0);
                     if (k == EXIT_FAILURE)
                     {
                         printf("1\n");
@@ -842,18 +965,20 @@ int main(int argc, char *argv[])
             {
                 printf("We got one %d\n", i);
 
-                if (i == sock)
+                if (i == sock || i == https_sock)
                 {
+                    // accept HTTP and HTTPS connections
+
                     struct sockaddr *temp_addr;
                     temp_addr = (struct sockaddr *)malloc(sizeof(struct sockaddr));
                     cli_size = sizeof(temp_addr);
 
                     int new_socket;
-                    if ((new_socket = accept(sock, temp_addr,
+                    if ((new_socket = accept(i, temp_addr,
                                              &cli_size)) == -1)
                     {
-                        close(sock);
                         error_log(log, "", "Error accepting connection.\n");
+                        lisod_shutdown(EXIT_FAILURE);
                         return EXIT_FAILURE;
                     }
 
@@ -862,8 +987,8 @@ int main(int argc, char *argv[])
                     if (num_client == MAX_CLIENT)
                     {
                         Response *response = handle_request(NULL, log, 503, www_file);
-                        insert_table(table, i, temp_addr);
-                        if (send_reply(i, sock, NULL, response, log, table, &readfds) == EXIT_FAILURE)
+                        insert_table(table, i, temp_addr, i);
+                        if (send_reply(NULL, response, log, table, &readfds, 0) == EXIT_FAILURE)
                         {
                             printf("2\n");
                             free(response->buf);
@@ -878,12 +1003,39 @@ int main(int argc, char *argv[])
 
                     else
                     {
+                        if (i == sock)
+                        {
+                            insert_table(table, new_socket, temp_addr, sock);
+                        }
+                        else if (i == https_sock)
+                        {
+                            /************ WRAP SOCKET WITH SSL ************/
+                            if ((client_context = SSL_new(ssl_context)) == NULL)
+                            {
+                                error_log(log, "", "Error creating client SSL context.\n");
+                                lisod_shutdown(EXIT_FAILURE);
+                                return EXIT_FAILURE;
+                            }
+
+                            if (SSL_set_fd(client_context, new_socket) == 0)
+                            {
+                                error_log(log, "", "Error creating client SSL context.\n");
+                                lisod_shutdown(EXIT_FAILURE);
+                                return EXIT_FAILURE;
+                            }
+
+                            if (SSL_accept(client_context) <= 0)
+                            {
+
+                                error_log(log, "", "Error accepting (handshake) client SSL context.\n");
+                                lisod_shutdown(EXIT_FAILURE);
+                                return EXIT_FAILURE;
+                            }
+                            /************ END WRAP SOCKET WITH SSL ************/
+                            insert_table_with_context(table, new_socket, temp_addr, https_sock, client_context);
+                        }
                         num_client++;
-
                         FD_SET(new_socket, readfds);
-
-                        insert_table(table, new_socket, temp_addr);
-
                         if (new_socket > max_sd)
                         {
                             max_sd = new_socket;
@@ -892,7 +1044,6 @@ int main(int argc, char *argv[])
                 }
                 else
                 {
-
                     // handle client sock
                     client_sock = i;
 
@@ -900,11 +1051,25 @@ int main(int argc, char *argv[])
                     char *new_buf;
 
                     printf("Potato*******************************\n");
-                    if ((readret = recv(i, buf, BUF_SIZE, 0)) >= 1)
+
+                    // check the type of connection from table
+                    int mode_sock = lookup_table_connection(table, i);
+
+                    if (mode_sock == sock)
+                    {
+                        client_context = NULL;
+                    }
+                    else if (mode_sock == https_sock)
+                    {
+                        client_context = lookup_table_context(table, i);
+                    }
+
+                    // Handling HTTP and HTTPS receive
+                    if ((readret = receive(i, buf, client_context)) >= 1)
                     {
                         printf("Start parsing... \n");
                         printf("%s\n", buf);
-                        printf("size: %d\n", strlen(buf));
+                        printf("size: %ld\n", strlen(buf));
                         request = parse(buf, strlen(buf), i);
 
                         printf("result of request is %p\n", request);
@@ -949,7 +1114,7 @@ int main(int argc, char *argv[])
                                     for (k = strlen(new_buf); k < val; k += BUF_SIZE)
                                     {
                                         bzero(buf, BUF_SIZE);
-                                        readret = recv(i, buf, BUF_SIZE, 0);
+                                        readret = receive(i, buf, client_context);
                                         if (readret < 1)
                                             break;
                                         memcpy(new_buf + k, buf, MIN(BUF_SIZE, val - k));
@@ -972,7 +1137,9 @@ int main(int argc, char *argv[])
                         // printf("reaching end\n");
                         // memset(buf, 0, BUF_SIZE);
 
-                        if (send_reply(i, sock, request, response, log, table, &readfds) == EXIT_FAILURE)
+                        int mode = mode_sock == https_sock ? 1 : 0;
+
+                        if (send_reply(request, response, log, table, &readfds, mode) == EXIT_FAILURE)
                         {
                             printf("3\n");
                             free(response->buf);
@@ -987,17 +1154,18 @@ int main(int argc, char *argv[])
 
                     if (readret == -1)
                     {
-                        close_socket_client();
-                        close_socket_main();
                         error_log(log, "", "Error reading from client socket.\n");
+                        lisod_shutdown(EXIT_FAILURE);
+
                         return EXIT_FAILURE;
                     }
                     if (readret == 0)
                     {
                         if (close_socket_client())
                         {
-                            close_socket_main();
+
                             error_log(log, "", "Error closing client socket.\n");
+                            lisod_shutdown(EXIT_FAILURE);
                             return EXIT_FAILURE;
                         }
                         FD_CLR(i, readfds);
@@ -1011,8 +1179,6 @@ int main(int argc, char *argv[])
     }
 
     printf("Token\n");
-
-    close_socket_main();
-
+    lisod_shutdown(EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

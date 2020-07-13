@@ -21,7 +21,7 @@ y.tab.c: parser.y
 # 	$(CC) -o $@ $^ $(CFLAGS) $(FLAGS)
 
 lisod: $(OBJ)
-	$(CC) -o $@ $^ $(CFLAGS) $(FLAGS)
+	$(CC) -o $@ $^ $(CFLAGS) $(FLAGS) -lssl
 
 echo_client:
 	$(CC) echo_client.c -o echo_client -Wall -Werror

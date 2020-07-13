@@ -122,11 +122,15 @@ t_dot;
 token:
 allowed_char_for_token {
 	// YPRINTF("%c, token: Matched rule 1.\n", $1);
-	snprintf($$, 8192, "%c", $1);
+	if (snprintf($$, 8192, "%c", $1) < 0){
+		abort();
+	}
 } |
 token allowed_char_for_token {
 	// YPRINTF("%s, %c token: Matched rule 2.\n", $1, $2);
-  snprintf($$, 8192, "%s%c", $1, $2);
+  if (snprintf($$, 8192, "%s%c", $1, $2) < 0){
+	  abort();
+  }
 };
 
 /*
@@ -167,11 +171,15 @@ t_backslash {
  */
 text: allowed_char_for_text {
 	// YPRINTF("%c text: Matched rule 1.\n", $1);
-	snprintf($$, 8192, "%c", $1);
+	if (snprintf($$, 8192, "%c", $1) < 0){
+		abort();
+	}
 } |
 text ows allowed_char_for_text {
 	// YPRINTF("%s, %s, %c text: Matched rule 2.\n", $1, $2, $3);
-	snprintf($$, 8192, "%s%s%c", $1, $2, $3);
+	if (snprintf($$, 8192, "%s%s%c", $1, $2, $3) < 0){
+		abort();
+	}
 };
 
 /*
