@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #define SUCCESS 0
+#define BUF_SIZE 8192
 
 //Header field
 typedef struct
@@ -18,7 +19,8 @@ typedef struct
 	char http_method[50];
 	char http_uri[4096];
 	Request_header *headers;
-	char *body;
+	char *buf;
+	int header_length;
 	int header_count;
 } Request;
 
@@ -32,3 +34,5 @@ typedef struct
 } Response;
 
 Request *parse(char *buffer, int size, int socketFd);
+
+Response *parse_response(char *buffer, int size, int socketFd);

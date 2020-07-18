@@ -40,8 +40,8 @@ purpose is:
 
             You will need to:
 
-                (1) Make SSL fd sockets non-blocking
-                (2) Check SSL errors (SSL_get_error() etc.) especially for
+                * (1) Make SSL fd sockets non-blocking
+                * (2) Check SSL errors (SSL_get_error() etc.) especially for
                     non-block early read/write returns
                 (3) Integrate these fd's and SSL_read and SSL_write into your
                     select() loop

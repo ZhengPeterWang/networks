@@ -44,6 +44,8 @@ size_t parsing_buf_siz;
 /* Current parsing_request Header Struct */
 Request *parsing_request;
 
+Response *parsing_response;
+
 %}
 
 
@@ -198,18 +200,39 @@ t_ws {
 	snprintf($$, 8192, "%s", $1);
 };
 
-request_line: token t_sp text t_sp text t_crlf {
-    strcpy(parsing_request->http_method, $1);
-	strcpy(parsing_request->http_uri, $3);
-	strcpy(parsing_request->http_version, $5);
+request_line: text t_sp text t_sp text t_crlf {
+	if (parsing_request != NULL){
+    	strcpy(parsing_request->http_method, $1);
+		strcpy(parsing_request->http_uri, $3);
+		strcpy(parsing_request->http_version, $5);
+	}
+	else {
+		parsing_response->code = atoi($3);
+	}
 	// YPRINTF("request_Line:\n%s\n%s\n%s\n",$1, $3,$5);
-}
+};
 
 request_header: token ows t_colon ows text ows t_crlf {
-	parsing_request->headers = realloc(parsing_request->headers, sizeof(Request_header) * (parsing_request->header_count + 1));
-    strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
-	strcpy(parsing_request->headers[parsing_request->header_count].header_value, $5);
-	parsing_request->header_count++;
+	if (parsing_request != NULL){
+		parsing_request->headers = realloc(parsing_request->headers, sizeof(Request_header) * (parsing_request->header_count + 1));
+    	strcpy(parsing_request->headers[parsing_request->header_count].header_name, $1);
+		strcpy(parsing_request->headers[parsing_request->header_count].header_value, $5);
+		parsing_request->header_count++;
+	}
+	else {
+		if (parsing_response->close == -1 && strcmp($1, "Connection") == 0){
+			if (strcmp($5, "close") == 0){
+				parsing_response->close = 0;
+			}
+			else {
+				parsing_response->close = 1;
+			}
+		}
+		if (parsing_response->size == -1 && strcmp($1, "Content-Length") == 0){
+			parsing_response->size = atoi($5);
+		}
+		
+	}
 	// YPRINTF("request_Header:\n%s\n%s\n",$1,$5);
 };
 
@@ -245,7 +268,15 @@ void set_parsing_options(char *buf, size_t siz, Request *request)
 	parsing_offset = 0;
 	parsing_buf_siz = siz;
     parsing_request = request;
+	parsing_response = NULL;
+}
 
+void set_parsing_options_response(char *buf, size_t siz, Response* response){
+	parsing_buf = buf;
+	parsing_offset = 0;
+	parsing_buf_siz = siz;
+	parsing_request = NULL;
+	parsing_response = response;
 }
 
 void yyerror (const char *s) {

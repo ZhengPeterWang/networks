@@ -30,7 +30,6 @@
 #include "parse.h"
 #include "hash_table.h"
 
-#define BUF_SIZE 8192
 #define HEADER_BUF_SIZE 8192
 #define TABLE_SIZE 1024
 #define MAX_CLIENT FD_SETSIZE
@@ -52,7 +51,7 @@ int close_socket_client()
 {
     if (close(client_sock))
     {
-        fprintf(stderr, "Failed closing socket. %d\n", client_sock);
+        fprintf(stderr, "Failed closing client socket. %d\n", client_sock);
         return 1;
     }
     client_sock = 0;
@@ -63,7 +62,7 @@ int close_socket_main()
 {
     if (close(sock))
     {
-        fprintf(stderr, "Failed closing socket. %d\n", sock);
+        fprintf(stderr, "Failed closing main socket. %d\n", sock);
         return 1;
     }
     sock = 0;
@@ -74,7 +73,7 @@ int close_socket_https()
 {
     if (close(https_sock))
     {
-        fprintf(stderr, "Failed closing socket. %d\n", https_sock);
+        fprintf(stderr, "Failed closing https socket. %d\n", https_sock);
         return 1;
     }
     https_sock = 0;
@@ -83,6 +82,8 @@ int close_socket_https()
 
 void lisod_shutdown(int ret)
 {
+    // TODO close all sockets when shutting down!
+    // put fd_set as global!
     if (client_sock != 0)
         close_socket_client();
     if (sock != 0)
@@ -201,7 +202,15 @@ const char *get_filename_ext(const char *filename)
     return dot + 1;
 }
 
-Response *handle_request(Request *request, Log *log, int pre_assigned_code, const char *www_folder)
+int check_uri(char *uri)
+{
+    const char *pre = "/cgi/";
+    size_t lenpre = strlen(pre),
+           lenstr = strlen(uri);
+    return lenstr < lenpre ? 0 : memcmp(pre, uri, lenpre) == 0;
+}
+
+Response *handle_request(Request *request, int pre_assigned_code, const char *www_folder)
 {
     printf("Parsing succeeded!\n");
 
@@ -216,7 +225,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
     char uri_buf[HEADER_BUF_SIZE];
     bzero(uri_buf, HEADER_BUF_SIZE);
 
-    // timeout
+    // timeout and other special cases
 
     if (request == NULL)
     {
@@ -253,6 +262,12 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
         phrase = "HTTP Version Not Supported";
         sz = 0;
         // version not supported. return 505.
+    }
+
+    // ********** CGI ***********
+    else if (check_uri(request->http_uri))
+    {
+        return NULL; // pass to the other handler
     }
 
     /* -------  GET and HEAD ------- */
@@ -436,7 +451,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
             // open the file and start writing to it
             FILE *file = fopen(uri_buf, "w");
 
-            printf("Request body: %s\n", request->body);
+            printf("Request buffer: %s\n", request->buf);
 
             if (file == NULL)
             {
@@ -453,7 +468,7 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
             // put the body into the file!
             if (code == 200)
             {
-                char *body = request->body;
+                char *body = request->buf + request->header_length;
 
                 // put the stuff!
                 if (fwrite(body, 1, val, file) != val)
@@ -668,16 +683,16 @@ Response *handle_request(Request *request, Log *log, int pre_assigned_code, cons
 
 int send_reply(Request *request, Response *response, Log *log, Table *table, fd_set **readfds, int mode)
 {
+    // TODO put request digest generation out of send_reply()!
+
     int socket_num = client_sock;
 
     // check which connection it is from the table!
 
-    int main_socket_num = lookup_table_connection(table, client_sock);
-
     struct sockaddr_in *new_addr = (struct sockaddr_in *)lookup_table(table, socket_num);
-    char *addr = inet_ntoa(new_addr->sin_addr);
+    char *addr = new_addr == NULL ? "N/A" : inet_ntoa(new_addr->sin_addr);
 
-    printf("Sending reply to socket %d with main socket %d\n", socket_num, main_socket_num);
+    printf("Sending reply to socket %d\n", socket_num);
 
     // log correctly the request!
 
@@ -724,11 +739,7 @@ int send_reply(Request *request, Response *response, Log *log, Table *table, fd_
     {
         if (close_socket_client())
         {
-            close_socket_main();
-            close_socket_https();
-            remove_all_entries_in_table(table);
-            error_log(log, "", "Error closing client socket.\n");
-            return CLOSE_SOCKET_FAILURE;
+            lisod_shutdown(EXIT_FAILURE);
         }
         FD_CLR(socket_num, *readfds);
         remove_table(table, socket_num);
@@ -739,8 +750,8 @@ int send_reply(Request *request, Response *response, Log *log, Table *table, fd_
     // free up the request
     if (request != NULL)
     {
-        if (request->body != NULL)
-            free(request->body);
+        if (request->buf != NULL)
+            free(request->buf);
         if (request->headers != NULL)
         {
             free(request->headers);
@@ -759,12 +770,382 @@ int receive(int i, char *buf, SSL *client_context)
         return SSL_read(client_context, buf, BUF_SIZE);
 }
 
+/* error messages stolen from: http://linux.die.net/man/2/execve */
+void execve_error_handler()
+{
+    switch (errno)
+    {
+    case E2BIG:
+        fprintf(stderr, "The total number of bytes in the environment \
+(envp) and argument list (argv) is too large.\n");
+        return;
+    case EACCES:
+        fprintf(stderr, "Execute permission is denied for the file or a \
+script or ELF interpreter.\n");
+        return;
+    case EFAULT:
+        fprintf(stderr, "filename points outside your accessible address \
+space.\n");
+        return;
+    case EINVAL:
+        fprintf(stderr, "An ELF executable had more than one PT_INTERP \
+segment (i.e., tried to name more than one \
+interpreter).\n");
+        return;
+    case EIO:
+        fprintf(stderr, "An I/O error occurred.\n");
+        return;
+    case EISDIR:
+        fprintf(stderr, "An ELF interpreter was a directory.\n");
+        return;
+    case ELIBBAD:
+        fprintf(stderr, "An ELF interpreter was not in a recognised \
+format.\n");
+        return;
+    case ELOOP:
+        fprintf(stderr, "Too many symbolic links were encountered in \
+resolving filename or the name of a script \
+or ELF interpreter.\n");
+        return;
+    case EMFILE:
+        fprintf(stderr, "The process has the maximum number of files \
+open.\n");
+        return;
+    case ENAMETOOLONG:
+        fprintf(stderr, "filename is too long.\n");
+        return;
+    case ENFILE:
+        fprintf(stderr, "The system limit on the total number of open \
+files has been reached.\n");
+        return;
+    case ENOENT:
+        fprintf(stderr, "The file filename or a script or ELF interpreter \
+does not exist, or a shared library needed for \
+file or interpreter cannot be found.\n");
+        return;
+    case ENOEXEC:
+        fprintf(stderr, "An executable is not in a recognised format, is \
+for the wrong architecture, or has some other \
+format error that means it cannot be \
+executed.\n");
+        return;
+    case ENOMEM:
+        fprintf(stderr, "Insufficient kernel memory was available.\n");
+        return;
+    case ENOTDIR:
+        fprintf(stderr, "A component of the path prefix of filename or a \
+script or ELF interpreter is not a directory.\n");
+        return;
+    case EPERM:
+        fprintf(stderr, "The file system is mounted nosuid, the user is \
+not the superuser, and the file has an SUID or \
+SGID bit set.\n");
+        return;
+    case ETXTBSY:
+        fprintf(stderr, "Executable was open for writing by one or more \
+processes.\n");
+        return;
+    default:
+        fprintf(stderr, "Unkown error occurred with execve().\n");
+        return;
+    }
+}
+
+char *ENVP[] = {
+    "CONTENT_LENGTH=",
+    "CONTENT-TYPE=",
+    "GATEWAY_INTERFACE=CGI/1.1",
+    "QUERY_STRING=",
+    "REMOTE_ADDR=",
+    "REMOTE_HOST=", // ?
+    "REQUEST_METHOD=",
+    "SCRIPT_NAME=/cgi",
+    "HOST_NAME=", // ?
+    "SERVER_PORT=80",
+    "SERVER_PROTOCOL=HTTP/1.1",
+    "SERVER_SOFTWARE=Liso/1.0",
+    "HTTP_ACCEPT=",
+    "HTTP_REFERER=",
+    "HTTP_ACCEPT_ENCODING=",
+    "HTTP_ACCEPT_LANGUAGE=",
+    "HTTP_ACCEPT_CHARSET=",
+    "HTTP_COOKIE=",
+    "HTTP_USER_AGENT=",
+    "HTTP_CONNECTION=",
+    "HTTP_HOST=",
+    "REQUEST_URI=",
+    "PATH_INFO=",
+    NULL};
+
+char **get_env_ptrs(Request *request, int my_sock, char *addr)
+{
+
+    /*************** BEGIN ENVIRONMENT VARIABLES **************/
+
+    // parse URI
+    char *uri = malloc(strlen(request->http_uri));
+
+    strcpy(uri, request->http_uri);
+
+    char *ptr = strchr(uri, '?') + 1;
+
+    char *query = malloc(strlen(ptr));
+    bzero(query, strlen(ptr));
+    strcpy(query, ptr);
+    bzero(ptr - 1, strlen(query) + sizeof(char));
+
+    // QUERY_STRING
+    ENVP[3] = malloc(BUF_SIZE);
+    bzero(ENVP[3], BUF_SIZE);
+    sprintf(ENVP[3], "QUERY_STRING=%s", query);
+    free(query);
+
+    // REQUEST URI
+    ENVP[21] = malloc(BUF_SIZE);
+    bzero(ENVP[21], BUF_SIZE);
+    sprintf(ENVP[21], "REQUEST_URI=%s", uri);
+
+    // PATH INFO
+    ENVP[22] = malloc(BUF_SIZE);
+    bzero(ENVP[22], BUF_SIZE);
+    sprintf(ENVP[22], "REQUEST_URI=%s", uri + 4);
+    free(uri);
+
+    // REMOTE_ADDR
+    ENVP[4] = malloc(BUF_SIZE);
+    bzero(ENVP[4], BUF_SIZE);
+    sprintf(ENVP[4], "REMOTE_ADDR=%s", addr);
+
+    // REQUEST_METHOD
+    ENVP[6] = malloc(BUF_SIZE);
+    bzero(ENVP[6], BUF_SIZE);
+    sprintf(ENVP[6], "REQUEST_METHOD=%s", request->http_method);
+
+    // SERVER PORT: decide whether it is HTTP or HTTPS
+    ENVP[9] = malloc(BUF_SIZE);
+    bzero(ENVP[9], BUF_SIZE);
+    sprintf(ENVP[9], "SERVER_PORT=%d", my_sock);
+
+    int k;
+    for (k = 0; k < request->header_count; ++k)
+    {
+        Request_header header = request->headers[k];
+        // CONTENT_LENGTH
+        if (strcmp(header.header_name, "Content-Length") == 0)
+        {
+            ENVP[0] = malloc(BUF_SIZE);
+            bzero(ENVP[0], BUF_SIZE);
+            sprintf(ENVP[0], "CONTENT_LENGTH=%s", header.header_value);
+            break;
+        }
+
+        // CONTENT_TYPE
+        else if (strcmp(header.header_name, "Content-Type") == 0)
+        {
+            ENVP[1] = malloc(BUF_SIZE);
+            bzero(ENVP[1], BUF_SIZE);
+            sprintf(ENVP[1], "CONTENT-TYPE=%s", header.header_value);
+            break;
+        }
+        // HTTP_ACCEPT
+        else if (strcmp(header.header_name, "Accept") == 0)
+        {
+
+            ENVP[12] = malloc(BUF_SIZE);
+            bzero(ENVP[12], BUF_SIZE);
+            sprintf(ENVP[12], "HTTP_ACCEPT=%s", header.header_value);
+            break;
+        }
+        // HTTP_REFERER
+        else if (strcmp(header.header_name, "Referer") == 0)
+        {
+
+            ENVP[13] = malloc(BUF_SIZE);
+            bzero(ENVP[13], BUF_SIZE);
+            sprintf(ENVP[13], "HTTP_REFERER=%s", header.header_value);
+            break;
+        }
+        // HTTP_ACCEPT_ENCODING
+        else if (strcmp(header.header_name, "Accept-Encoding") == 0)
+        {
+
+            ENVP[14] = malloc(BUF_SIZE);
+            bzero(ENVP[14], BUF_SIZE);
+            sprintf(ENVP[14], "HTTP_ACCEPT_ENCODING=%s", header.header_value);
+            break;
+        }
+        // HTTP_ACCEPT_LANGUAGE
+        else if (strcmp(header.header_name, "Accept-Language") == 0)
+        {
+
+            ENVP[15] = malloc(BUF_SIZE);
+            bzero(ENVP[15], BUF_SIZE);
+            sprintf(ENVP[15], "HTTP_ACCEPT_LANGUAGE=%s", header.header_value);
+            break;
+        }
+        // HTTP_ACCEPT_CHARSET
+        else if (strcmp(header.header_name, "Accept-Charset") == 0)
+        {
+
+            ENVP[16] = malloc(BUF_SIZE);
+            bzero(ENVP[16], BUF_SIZE);
+            sprintf(ENVP[16], "HTTP_ACCEPT_CHARSET=%s", header.header_value);
+            break;
+        }
+        // COOKIE
+        else if (strcmp(header.header_name, "Cookie") == 0)
+        {
+
+            ENVP[17] = malloc(BUF_SIZE);
+            bzero(ENVP[17], BUF_SIZE);
+            sprintf(ENVP[17], "HTTP_COOKIE=%s", header.header_value);
+            break;
+        }
+        // USER-AGENT
+        else if (strcmp(header.header_name, "User-Agent") == 0)
+        {
+
+            ENVP[18] = malloc(BUF_SIZE);
+            bzero(ENVP[18], BUF_SIZE);
+            sprintf(ENVP[18], "HTTP_USER_AGENT=%s", header.header_value);
+            break;
+        }
+        // CONNECTION
+        else if (strcmp(header.header_name, "Connection") == 0)
+        {
+
+            ENVP[19] = malloc(BUF_SIZE);
+            bzero(ENVP[19], BUF_SIZE);
+            sprintf(ENVP[19], "HTTP_CONNECTION=%s", header.header_value);
+            break;
+        }
+        // HOST
+        else if (strcmp(header.header_name, "Host") == 0)
+        {
+
+            ENVP[20] = malloc(BUF_SIZE);
+            bzero(ENVP[20], BUF_SIZE);
+            sprintf(ENVP[20], "HTTP_HOST=%s", header.header_value);
+            break;
+        }
+    }
+    return ENVP;
+
+    /*************** END ENVIRONMENT VARIABLES **************/
+}
+
+int handle_cgi_request(Request *request, Log *log, char *addr, char *cgi_folder, int my_sock)
+{
+
+    char **ENVP = get_env_ptrs(request, my_sock, addr);
+
+    /*************** BEGIN VARIABLE DECLARATIONS **************/
+    pid_t pid;
+    int stdin_pipe[2];
+    int stdout_pipe[2];
+    char buf[BUF_SIZE];
+    char *ARGV[] = {
+        cgi_folder,
+        NULL};
+    int readret;
+    /*************** END VARIABLE DECLARATIONS **************/
+
+    /*************** BEGIN PIPE **************/
+    /* 0 can be read from, 1 can be written to */
+    if (pipe(stdin_pipe) < 0)
+    {
+        // TODO change the error messages into log reports and return gracefully
+        fprintf(stderr, "Error piping for stdin.\n");
+        return EXIT_FAILURE;
+    }
+
+    if (pipe(stdout_pipe) < 0)
+    {
+        fprintf(stderr, "Error piping for stdout.\n");
+        return EXIT_FAILURE;
+    }
+    /*************** END PIPE **************/
+    /*************** BEGIN FORK **************/
+    pid = fork();
+    /* not good */
+    if (pid < 0)
+    {
+        fprintf(stderr, "Something really bad happened when fork()ing.\n");
+        return EXIT_FAILURE;
+    }
+
+    /* child, setup environment, execve */
+    if (pid == 0)
+    {
+        /*************** BEGIN EXECVE ****************/
+        close(stdout_pipe[0]);
+        close(stdin_pipe[1]);
+        dup2(stdout_pipe[1], fileno(stdout));
+        dup2(stdin_pipe[0], fileno(stdin));
+        /* you should probably do something with stderr */
+
+        /* pretty much no matter what, if it returns bad things happened... */
+        if (execve(cgi_folder, ARGV, ENVP))
+        {
+            execve_error_handler();
+            fprintf(stderr, "Error executing execve syscall.\n");
+            return EXIT_FAILURE;
+        }
+        /*************** END EXECVE ****************/
+    }
+
+    if (pid > 0)
+    {
+        fprintf(stdout, "Parent: Heading to select() loop.\n");
+        close(stdout_pipe[1]);
+        close(stdin_pipe[0]);
+
+        // then change client_sock to stdin_pipe[1], the place to write
+
+        client_sock = stdin_pipe[1];
+
+        // return the other fd for log
+
+        return stdout_pipe[1];
+    }
+    /*************** END FORK **************/
+
+    fprintf(stderr, "Process exiting, badly...how did we get here!?\n");
+    return EXIT_FAILURE;
+}
+
+Response *forward_cgi_request(Request *request)
+{
+    Response *ret = malloc(sizeof(Response));
+    int val = 0;
+
+    for (int k = 0; k < request->header_count; ++k)
+    {
+        Request_header header = request->headers[k];
+        if (strcmp(header.header_name, "Content-Length") == 0)
+        {
+            val = atoi(header.header_value);
+            break;
+        }
+    }
+
+    // val should never be 0 at this point
+
+    ret->buf = request->buf;
+    ret->real_size = request->header_length + val;
+    ret->size = -1;
+    ret->close = -1;
+    ret->code = -1;
+
+    return ret;
+}
+
 int main(int argc, char *argv[])
 {
-    if (argc != 8)
+    if (argc != 9)
     {
         printf("Usage: ./lisod [HTTP Port] [HTTPS Port] [log file] [lock file] "
-               "[www file] [private key file] [certificate file]\n");
+               "[www file] [cgi file] [private key file] [certificate file]\n");
         printf("%d\n", argc);
         return -1;
     }
@@ -774,10 +1155,11 @@ int main(int argc, char *argv[])
     char *log_file = argv[3];
     char *lock_file = argv[4];
     char *www_file = argv[5];
-    char *private_key_file = argv[6];
-    char *cert_file = argv[7];
-    printf("%d %d %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
-           www_file, private_key_file, cert_file);
+    char *cgi_file = argv[6];
+    char *private_key_file = argv[7];
+    char *cert_file = argv[8];
+    printf("%d %d %s %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
+           www_file, cgi_file, private_key_file, cert_file);
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr;
@@ -928,12 +1310,13 @@ int main(int argc, char *argv[])
         {
             for (int i = 0; i < max_sd + 1; i++)
             {
+                // TODO do NOT send a timeout response to the CGI script!
                 if (i != sock && lookup_table(table, i) != NULL)
                 {
                     printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
                     client_sock = i;
-                    Response *response = handle_request(NULL, log, 408, www_file);
+                    Response *response = handle_request(NULL, 408, www_file);
                     int k = send_reply(NULL, response, log, table, &readfds, 0);
                     if (k == EXIT_FAILURE)
                     {
@@ -964,6 +1347,7 @@ int main(int argc, char *argv[])
             if (FD_ISSET(i, &newfds))
             {
                 printf("We got one %d\n", i);
+                client_sock = i;
 
                 if (i == sock || i == https_sock)
                 {
@@ -982,11 +1366,16 @@ int main(int argc, char *argv[])
                         return EXIT_FAILURE;
                     }
 
+                    // set sockets as non blocking
+                    // TODO: check for SSL errors like non-block early read/write returns
+                    // fcntl(i, F_SETFL, O_NONBLOCK);
+                    // fcntl(new_socket, F_SETFL, O_NONBLOCK);
+
                     // return 503 code when unable to accept more connections
 
                     if (num_client == MAX_CLIENT)
                     {
-                        Response *response = handle_request(NULL, log, 503, www_file);
+                        Response *response = handle_request(NULL, 503, www_file);
                         insert_table(table, i, temp_addr, i);
                         if (send_reply(NULL, response, log, table, &readfds, 0) == EXIT_FAILURE)
                         {
@@ -1045,10 +1434,7 @@ int main(int argc, char *argv[])
                 else
                 {
                     // handle client sock
-                    client_sock = i;
-
                     Request *request = NULL;
-                    char *new_buf;
 
                     printf("Potato*******************************\n");
 
@@ -1064,81 +1450,175 @@ int main(int argc, char *argv[])
                         client_context = lookup_table_context(table, i);
                     }
 
-                    // Handling HTTP and HTTPS receive
+                    // ******** Handling HTTP and HTTPS receive ********
+
                     if ((readret = receive(i, buf, client_context)) >= 1)
                     {
-                        printf("Start parsing... \n");
-                        printf("%s\n", buf);
-                        printf("size: %ld\n", strlen(buf));
-                        request = parse(buf, strlen(buf), i);
+                        printf("Received!!!\n");
 
-                        printf("result of request is %p\n", request);
+                        // ******** Read more stuff from the buffer ********
+                        char *new_buf = malloc(readret + 1);
+                        bzero(new_buf, readret + 1);
+                        memcpy(new_buf, buf, readret);
+                        int len = readret;
+
+                        if (readret == BUF_SIZE)
+                        {
+                            printf("Start Reading a new line!!!\n");
+                            while (readret == BUF_SIZE)
+                            {
+                                printf("Reading a new line!!!\n");
+                                new_buf = realloc(new_buf, len + BUF_SIZE + 1);
+                                new_buf[len] = 0;
+                                readret = receive(i, new_buf + len, client_context);
+                                len += readret;
+                            }
+                            // int k, val;
+                            // for (k = 0; k < request->header_count; ++k)
+                            // {
+                            //     Request_header header = request->headers[k];
+                            //     if (strcmp(header.header_name, "Content-Length") == 0)
+                            //     {
+                            //         val = atoi(header.header_value);
+                            //         break;
+                            //     }
+                            // }
+                            // if (k == request->header_count)
+                            // {
+                            //     // send a response of 411
+                            //     printf("DID NOT SEE CONTENT LENGTH!\n");
+                            //     response = handle_request(NULL, 411, www_file);
+                            // }
+                            // else
+                            // {
+                            // new_buf = realloc(new_buf, request->header_length + val + 1);
+                            // new_buf[request->header_length + val] = 0;
+                            // // TODO check if strlen(new_buf) is the correct starting point
+                            // for (k = BUF_SIZE; k < request->header_length + val; k += BUF_SIZE)
+                            // {
+                            //     bzero(buf, BUF_SIZE);
+                            //     readret = receive(i, buf, client_context);
+                            //     if (readret < 1)
+                            //         break;
+                            //     memcpy(new_buf + k, buf, MIN(BUF_SIZE, val - k));
+                            // }
+                            // if (readret >= 1)
+                            // {
+                            //     request->buf = new_buf;
+                            // }
+                            // else
+                            // {
+                            //     //TODO handle error
+                            // }
+                            // }
+                            // read more stuff from body
+                        }
+
+                        // ******** Parsing ********
 
                         Response *response = NULL;
 
-                        if (request == NULL)
-                        {
-                            new_buf = NULL;
-                            response = handle_request(NULL, log, 400, www_file);
-                            printf("processing request\n");
-
-                            // parsing failed
-                            // send a response of 400
-                        }
-                        else
-                        {
-                            new_buf = request->body;
-                            if (readret == BUF_SIZE)
-                            {
-                                int k, val;
-                                for (k = 0; k < request->header_count; ++k)
-                                {
-                                    Request_header header = request->headers[k];
-                                    if (strcmp(header.header_name, "Content-Length") == 0)
-                                    {
-                                        val = atoi(header.header_value);
-                                        break;
-                                    }
-                                }
-                                if (k == request->header_count)
-                                {
-                                    // send a response of 411
-                                    printf("DID NOT SEE CONTENT LENGTH!\n");
-                                    response = handle_request(NULL, log, 411, www_file);
-                                }
-                                else
-                                {
-                                    new_buf = realloc(new_buf, val + 1);
-                                    new_buf[val] = 0;
-                                    // TODO check if strlen(new_buf) is the correct starting point
-                                    for (k = strlen(new_buf); k < val; k += BUF_SIZE)
-                                    {
-                                        bzero(buf, BUF_SIZE);
-                                        readret = receive(i, buf, client_context);
-                                        if (readret < 1)
-                                            break;
-                                        memcpy(new_buf + k, buf, MIN(BUF_SIZE, val - k));
-                                    }
-                                    if (readret >= 1)
-                                    {
-                                        request->body = new_buf;
-                                    }
-                                }
-                                // read more stuff from body
-                            }
-                            // handle request
-                            if (response == NULL)
-                            {
-                                printf("handling the request!\n");
-                                response = handle_request(request, log, 0, www_file);
-                            }
-                        }
-
-                        // printf("reaching end\n");
-                        // memset(buf, 0, BUF_SIZE);
+                        printf("Start parsing... \n");
+                        // printf("%s\n", new_buf);
+                        // printf("size: %ld\n", len);
 
                         int mode = mode_sock == https_sock ? 1 : 0;
 
+                        // If the received request is from a logged CGI
+                        // socket, then this request is a response
+                        if (lookup_table(table, i) == NULL && lookup_table_connection(table, i) != -1)
+                        {
+                            // pass it into a new parser and attempt to get a response
+                            response = parse_response(new_buf, len, i);
+
+                            // then set client_sock to be the original connection
+                            client_sock = lookup_table_connection(table, i);
+
+                            // then close the connection with stdout_pipe[0]
+                            close(i);
+
+                            // decrease num_client, remove it from hash table,
+                            // remove it from fd_set
+                            num_client--;
+                            FD_CLR(i, readfds);
+                            remove_table(table, i);
+
+                            // parsing failed
+                            if (response == NULL)
+                            {
+                                // send 400 to client!
+                                new_buf = NULL;
+                                response = handle_request(NULL, 500, www_file);
+                                printf("Parsing response from CGI failed!\n");
+                            }
+                        }
+                        else
+                        // the request is a normal request, parse as a request
+                        {
+                            request = parse(new_buf, len, i);
+
+                            printf("result of request is %p\n", request);
+
+                            // parsing failed
+                            if (request == NULL)
+                            {
+                                // send a response of 400
+                                response = handle_request(NULL, 400, www_file);
+                                printf("Parsing request failed!\n");
+                            }
+                            else
+                            {
+                                // handle request
+
+                                printf("handling the request!\n");
+
+                                // pre process request for particular errors
+                                // then check URI for /cgi/
+                                response = handle_request(request, 0, www_file);
+
+                                /************* HANDLE CGI **************/
+
+                                if (response == NULL)
+                                {
+                                    // if /cgi exists, handle it in a particular handler
+                                    char *new_addr = inet_ntoa(((struct sockaddr_in *)lookup_table(table, i))->sin_addr);
+
+                                    int n = lookup_table_connection(table, i);
+
+                                    // handling CGI requests
+                                    int socket_num = handle_cgi_request(request, log, new_addr, cgi_file, n);
+                                    if (socket_num == EXIT_FAILURE)
+                                    {
+                                        // handling error. send a response of 500
+                                        response = handle_request(NULL, 500, www_file);
+                                        printf("Handling CGI request failed!\n");
+                                    }
+                                    else
+                                    {
+                                        // set max socket, increase num_client
+                                        max_sd = MAX(max_sd, socket_num);
+                                        num_client++;
+
+                                        // log stdout_pipe[0] socket in the hash table and fd_set
+                                        insert_table(table, client_sock, NULL, socket_num);
+                                        FD_SET(socket_num, readfds);
+
+                                        mode = 0;
+
+                                        // draft a special response that forwards request to stdin_pipe[1]
+                                        response = forward_cgi_request(request);
+                                    }
+                                }
+
+                                /************* END HANDLE CGI **************/
+                            }
+                        }
+                        // printf("reaching end\n");
+                        // memset(buf, 0, BUF_SIZE);
+
+                        // ******** Send Reply ********
+
+                        // TODO check if send_reply works properly with CGI and new logics!
                         if (send_reply(request, response, log, table, &readfds, mode) == EXIT_FAILURE)
                         {
                             printf("3\n");
@@ -1152,8 +1632,16 @@ int main(int argc, char *argv[])
                         printf("In 802\n");
                     }
 
-                    if (readret == -1)
+                    if (readret < 0)
                     {
+                        // handling SSL read errors and normal read errors
+                        if (client_context != NULL)
+                        {
+                            char msg[100];
+                            sprintf(msg, "Error SSL reading from client socket. Error number: %d\n",
+                                    SSL_get_error(client_context, readret));
+                            error_log(log, "", msg);
+                        }
                         error_log(log, "", "Error reading from client socket.\n");
                         lisod_shutdown(EXIT_FAILURE);
 
@@ -1163,7 +1651,6 @@ int main(int argc, char *argv[])
                     {
                         if (close_socket_client())
                         {
-
                             error_log(log, "", "Error closing client socket.\n");
                             lisod_shutdown(EXIT_FAILURE);
                             return EXIT_FAILURE;
