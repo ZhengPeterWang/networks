@@ -94,7 +94,7 @@ Request *parse(char *buffer, int size, int socketFd)
 		}
 	}
 	//TODO Handle Malformed Requests
-	printf("Parsing Request Failed\n");
+	printf("Parsing Request Failed.\n");
 
 	return NULL;
 }
@@ -181,4 +181,6 @@ Response *parse_response(char *buffer, int size, int socketFd)
 			return NULL;
 		}
 	}
+	printf("Parsing response failed.\n");
+	return NULL;
 }

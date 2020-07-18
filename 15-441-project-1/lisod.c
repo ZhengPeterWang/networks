@@ -632,7 +632,7 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
 
         strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtim).tv_sec;
+        time_t last_modified = (info->st_mtimespec).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         free(temp_buf);
@@ -711,7 +711,7 @@ int send_reply(Request *request, Response *response, Log *log, Table *table, fd_
     int num;
     if (mode == 0)
     {
-        num = send(socket_num, response->buf, response->real_size, 0);
+        num = write(socket_num, response->buf, response->real_size);
     }
     else if (mode == 1)
     {
@@ -722,7 +722,7 @@ int send_reply(Request *request, Response *response, Log *log, Table *table, fd_
     if (num != response->real_size)
     {
         //  securely delete context
-        printf("send num: %d, errno: %d\n", num, errno);
+        printf("send num: %d, errno: %d, mode: %d\n", num, errno, mode);
         if (mode == 1)
             printf("Error indicator:%d\n", SSL_get_error(lookup_table_context(table, client_sock), num));
         error_log(log, addr, "Error sending to client.\n");
@@ -798,10 +798,10 @@ interpreter).\n");
     case EISDIR:
         fprintf(stderr, "An ELF interpreter was a directory.\n");
         return;
-    case ELIBBAD:
-        fprintf(stderr, "An ELF interpreter was not in a recognised \
-format.\n");
-        return;
+        //     case ELIBBAD:
+        //         fprintf(stderr, "An ELF interpreter was not in a recognised \
+// format.\n");
+        //         return;
     case ELOOP:
         fprintf(stderr, "Too many symbolic links were encountered in \
 resolving filename or the name of a script \
@@ -1103,6 +1103,7 @@ int handle_cgi_request(Request *request, Log *log, char *addr, char *cgi_folder,
         // then change client_sock to stdin_pipe[1], the place to write
 
         client_sock = stdin_pipe[1];
+        printf("client_sock: %d\n", stdin_pipe[1]);
 
         // return the other fd for log
 
@@ -1447,6 +1448,7 @@ int main(int argc, char *argv[])
                     }
                     else if (mode_sock == https_sock)
                     {
+                        printf("Received an SSL connection!\n");
                         client_context = lookup_table_context(table, i);
                     }
 
@@ -1585,6 +1587,8 @@ int main(int argc, char *argv[])
 
                                     int n = lookup_table_connection(table, i);
 
+                                    printf("handling CGI! connection: %d\n", n);
+
                                     // handling CGI requests
                                     int socket_num = handle_cgi_request(request, log, new_addr, cgi_file, n);
                                     if (socket_num == EXIT_FAILURE)
@@ -1600,13 +1604,15 @@ int main(int argc, char *argv[])
                                         num_client++;
 
                                         // log stdout_pipe[0] socket in the hash table and fd_set
-                                        insert_table(table, client_sock, NULL, socket_num);
+                                        insert_table(table, socket_num, NULL, i);
                                         FD_SET(socket_num, readfds);
 
                                         mode = 0;
 
                                         // draft a special response that forwards request to stdin_pipe[1]
                                         response = forward_cgi_request(request);
+
+                                        printf("ready to pass response! \nBuf: %s\nSize: %zd\n", response->buf, response->real_size);
                                     }
                                 }
 
