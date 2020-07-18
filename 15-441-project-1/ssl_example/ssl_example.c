@@ -29,7 +29,7 @@ int close_socket(int sock)
     return 0;
 }
 
-int main(char *argv[], int argc)
+int main(int argc, char *argv[])
 {
 
     /************ VARIABLE DECLARATIONS ************/
