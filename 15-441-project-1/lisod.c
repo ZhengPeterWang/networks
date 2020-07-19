@@ -894,8 +894,10 @@ char **get_env_ptrs(Request *request, int my_sock, char *addr)
 
     char *query = malloc(strlen(ptr));
     bzero(query, strlen(ptr));
-    strcpy(query, ptr);
+    memcpy(query, ptr, strlen(ptr));
     bzero(ptr - 1, strlen(query) + sizeof(char));
+
+    printf("uri: %s, query: %s\n", uri, query);
 
     // QUERY_STRING
     ENVP[3] = malloc(BUF_SIZE);

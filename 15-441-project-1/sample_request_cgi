@@ -1,4 +1,4 @@
-GET /cgi/make?text=People's+Republic+of+Peter HTTP/1.1
+GET /cgi/make?text=Aahil+and+Amanda+are+Good+Friends HTTP/1.1
 Host: artii.herokuapp.com
 Connection: keep-alive
 
