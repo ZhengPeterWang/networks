@@ -44,6 +44,14 @@ int client_sock = 0;
 int https_sock = 0;
 Table *table;
 SSL_CTX *ssl_context;
+int http_port;
+int https_port;
+char *log_file;
+char *lock_file;
+char *www_file;
+char *cgi_file;
+char *private_key_file;
+char *cert_file;
 
 /***** Daemonize code *****/
 
@@ -80,7 +88,7 @@ int close_socket_https()
     return 0;
 }
 
-void lisod_shutdown(int ret)
+void lisod_cleanup()
 {
     // TODO close all sockets when shutting down!
     // put fd_set as global!
@@ -93,7 +101,20 @@ void lisod_shutdown(int ret)
     remove_all_entries_in_table(table);
     if (ssl_context != NULL)
         SSL_CTX_free(ssl_context);
+}
+
+void lisod_shutdown(int ret)
+{
+    lisod_cleanup();
     exit(ret);
+}
+
+int lisod_start();
+
+void lisod_restart()
+{
+    lisod_cleanup();
+    lisod_start();
 }
 
 /**
@@ -106,12 +127,16 @@ void signal_handler(int sig)
     case SIGHUP:
         /* rehash the server */
         printf("handling sighup!\n");
-
+        lisod_restart();
+        break;
+    case SIGINT:
+        printf("handling sigint!\n");
+        lisod_restart();
         break;
     case SIGTERM:
         /* finalize and shutdown the server */
         printf("handling sigterm!\n");
-        lisod_shutdown(EXIT_SUCCESS);
+        lisod_shutdown(EXIT_FAILURE);
         break;
     default:
         printf("handling signal %d\n", sig);
@@ -1146,26 +1171,9 @@ Response *forward_cgi_request(Request *request)
     return ret;
 }
 
-int main(int argc, char *argv[])
+int lisod_start()
 {
-    if (argc != 9)
-    {
-        printf("Usage: ./lisod [HTTP Port] [HTTPS Port] [log file] [lock file] "
-               "[www file] [cgi file] [private key file] [certificate file]\n");
-        printf("%d\n", argc);
-        return -1;
-    }
     SSL *client_context;
-    int http_port = atoi(argv[1]);
-    int https_port = atoi(argv[2]);
-    char *log_file = argv[3];
-    char *lock_file = argv[4];
-    char *www_file = argv[5];
-    char *cgi_file = argv[6];
-    char *private_key_file = argv[7];
-    char *cert_file = argv[8];
-    printf("%d %d %s %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
-           www_file, cgi_file, private_key_file, cert_file);
     ssize_t readret;
     socklen_t cli_size;
     struct sockaddr_in addr;
@@ -1562,6 +1570,9 @@ int main(int argc, char *argv[])
 
                             insert_cgi(table, client_sock, 0);
 
+                            // adjust mode
+                            mode = lookup_table_connection(table, client_sock) == https_sock ? 1 : 0;
+
                             // decrease num_client, remove it from hash table,
                             // remove it from fd_set
                             num_client--;
@@ -1610,7 +1621,7 @@ int main(int argc, char *argv[])
 
                                     int n = lookup_table_connection(table, i);
 
-                                    printf("handling CGI! connection: %d\n", n);
+                                    printf("handling CGI! connection: %d, uri: %s\n", n, request->http_uri);
 
                                     // handling CGI requests
                                     int socket_num = handle_cgi_request(request, log, new_addr, cgi_file, n);
@@ -1668,7 +1679,7 @@ int main(int argc, char *argv[])
                         printf("In 802\n");
                     }
 
-                    printf("Readret: %d\n", readret);
+                    printf("Readret: %zd\n", readret);
 
                     if (readret < 0)
                     {
@@ -1706,4 +1717,28 @@ int main(int argc, char *argv[])
     printf("Token\n");
     lisod_shutdown(EXIT_SUCCESS);
     return EXIT_SUCCESS;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 9)
+    {
+        printf("Usage: ./lisod [HTTP Port] [HTTPS Port] [log file] [lock file] "
+               "[www file] [cgi file] [private key file] [certificate file]\n");
+        printf("%d\n", argc);
+        return -1;
+    }
+    http_port = atoi(argv[1]);
+    https_port = atoi(argv[2]);
+    log_file = argv[3];
+    lock_file = argv[4];
+    www_file = argv[5];
+    cgi_file = argv[6];
+    private_key_file = argv[7];
+    cert_file = argv[8];
+    printf("%d %d %s %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
+           www_file, cgi_file, private_key_file, cert_file);
+    signal(SIGINT, signal_handler);
+
+    return lisod_start();
 }
