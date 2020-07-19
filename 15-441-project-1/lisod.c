@@ -246,10 +246,13 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
         case 503:
             code = 503;
             phrase = "Service Unavailable";
+        case 500:
+            code = 500;
+            phrase = "Internal Server Error";
         case 0:
             break;
         default:
-            printf("Should never happen!\n");
+            printf("Should never happen! %d\n", pre_assigned_code);
             break;
         }
     }
@@ -632,7 +635,7 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
 
         strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtimespec).tv_sec;
+        time_t last_modified = (info->st_mtim).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         free(temp_buf);
@@ -765,7 +768,7 @@ int send_reply(Request *request, Response *response, Log *log, Table *table, fd_
 int receive(int i, char *buf, SSL *client_context)
 {
     if (client_context == NULL)
-        return recv(i, buf, BUF_SIZE, 0);
+        return read(i, buf, BUF_SIZE);
     else
         return SSL_read(client_context, buf, BUF_SIZE);
 }
@@ -1107,7 +1110,7 @@ int handle_cgi_request(Request *request, Log *log, char *addr, char *cgi_folder,
 
         // return the other fd for log
 
-        return stdout_pipe[1];
+        return stdout_pipe[0];
     }
     /*************** END FORK **************/
 
@@ -1298,6 +1301,7 @@ int main(int argc, char *argv[])
 
         if ((select_val = select(max_sd + 1, &newfds, NULL, NULL, timeout)) < 0)
         {
+            printf("Select error! Errno: %d\n", errno);
             error_log(log, "", "Error select.\n");
             lisod_shutdown(EXIT_FAILURE);
             return EXIT_FAILURE;
@@ -1451,6 +1455,11 @@ int main(int argc, char *argv[])
                         printf("Received an SSL connection!\n");
                         client_context = lookup_table_context(table, i);
                     }
+                    else
+                    {
+                        client_context = NULL;
+                        printf("mode sock is not real sock! %d\n", mode_sock);
+                    }
 
                     // ******** Handling HTTP and HTTPS receive ********
 
@@ -1530,8 +1539,18 @@ int main(int argc, char *argv[])
                         // socket, then this request is a response
                         if (lookup_table(table, i) == NULL && lookup_table_connection(table, i) != -1)
                         {
+                            printf("Received a CGI response!\n");
+                            printf("Buf: %s\n", new_buf);
+                            printf("End of buf!\n");
+
                             // pass it into a new parser and attempt to get a response
                             response = parse_response(new_buf, len, i);
+
+                            if (response != NULL)
+                            {
+                                printf("response size: %ld, response real size: %ld\n",
+                                       response->size, response->real_size);
+                            }
 
                             // then set client_sock to be the original connection
                             client_sock = lookup_table_connection(table, i);
@@ -1633,7 +1652,8 @@ int main(int argc, char *argv[])
                             printf("In 797\n");
                             return EXIT_FAILURE;
                         }
-                        free(response->buf);
+                        if (response->close != -1)
+                            free(response->buf);
                         free(response);
                         printf("In 802\n");
                     }

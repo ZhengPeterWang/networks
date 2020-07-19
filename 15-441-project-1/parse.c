@@ -157,6 +157,7 @@ Response *parse_response(char *buffer, int size, int socketFd)
 		response->code = -1;
 		response->real_size = 0; // TODO
 		response->buf = buffer;
+		response->size = i;
 		//TODO You will need to handle resizing this in parser.y
 
 		set_parsing_options_response(buf, i, response);
@@ -164,14 +165,8 @@ Response *parse_response(char *buffer, int size, int socketFd)
 		yyrestart(NULL);
 		if (yyparse() == SUCCESS)
 		{
-			printf("Parsing succeeded!\n");
+			printf("Parsing response succeeded!\n");
 
-			if (response->size != -1)
-				response->real_size = i + response->size + 1; // just to be safe
-			else
-			{
-				response->real_size = size;
-			}
 			return response;
 		}
 		else
