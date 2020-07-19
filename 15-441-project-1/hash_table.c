@@ -19,6 +19,13 @@ int hashCode(Table *t, int key)
     return key % t->size;
 }
 
+int hashCodeMap(Map *map, int key)
+{
+    if (key < 0)
+        return -(key % map->size);
+    return key % map->size;
+}
+
 void insert_table(Table *t, int key, struct sockaddr *val, int connection)
 {
     int pos = hashCode(t, key);
@@ -190,4 +197,92 @@ void remove_all_entries_in_table(Table *t)
     }
     free(t->list);
     free(t);
+}
+
+Map *create_map(int size)
+{
+    Map *t = (Map *)malloc(sizeof(Map));
+    t->size = size;
+    t->list = (Map_Node **)malloc(size * sizeof(Map_Node *));
+    for (int i = 0; i < size; ++i)
+    {
+        t->list[i] = NULL;
+    }
+    return t;
+}
+
+void insert_map(Map *map, int key, int sock)
+{
+    int pos = hashCodeMap(map, key);
+    Map_Node *list = map->list[pos];
+    Map_Node *temp = list;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            temp->sock = sock;
+            return;
+        }
+        temp = temp->next;
+    }
+    Map_Node *newNode = (Map_Node *)malloc(sizeof(Map_Node));
+    newNode->key = key;
+    newNode->sock = sock;
+
+    map->list[pos] = newNode;
+}
+
+int lookup_map(Map *map, int key)
+{
+    int pos = hashCodeMap(map, key);
+    Map_Node *list = map->list[pos];
+    Map_Node *temp = list;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            return temp->sock;
+        }
+        temp = temp->next;
+    }
+    return -1;
+}
+
+void remove_map(Map *map, int key)
+{
+    int pos = hashCodeMap(map, key);
+
+    Map_Node *oldNode = map->list[pos];
+
+    Map_Node *temp = oldNode;
+    Map_Node *pre_temp = NULL;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            if (pre_temp != NULL)
+                pre_temp->next = temp->next;
+            else
+                map->list[pos] = temp->next;
+            free(temp);
+            return;
+        }
+        pre_temp = temp;
+        temp = temp->next;
+    }
+}
+
+void destroy_map(Map *map)
+{
+    for (int i = 0; i < map->size; ++i)
+    {
+        if (map->list[i] == NULL)
+            continue;
+        while (map->list[i] != NULL)
+        {
+            remove_map(map, map->list[i]->key);
+        }
+    }
+    free(map->list);
+    free(map);
 }

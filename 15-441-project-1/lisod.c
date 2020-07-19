@@ -43,6 +43,7 @@ int sock = 0;
 int client_sock = 0;
 int https_sock = 0;
 Table *table;
+Map *map;
 SSL_CTX *ssl_context;
 int http_port;
 int https_port;
@@ -99,6 +100,7 @@ void lisod_cleanup()
     if (https_sock != 0)
         close_socket_https();
     remove_all_entries_in_table(table);
+    destroy_map(map);
     if (ssl_context != NULL)
     {
         SSL_CTX_free(ssl_context);
@@ -146,6 +148,19 @@ void signal_handler(int sig)
         break;
         /* unhandled signal */
     }
+}
+
+void sig_child_handler(int sig, siginfo_t *info, void *ucontext)
+{
+    // TODO find the client_sock corresponding to this pid
+    // and then record -1 in table cgi field
+    int pid = info->si_pid;
+
+    int next_sock = lookup_map(map, pid);
+
+    insert_cgi(table, next_sock, -1);
+
+    remove_map(map, pid);
 }
 
 /** 
@@ -1136,10 +1151,26 @@ int handle_cgi_request(Request *request, Log *log, char *addr, char *cgi_folder,
         close(stdout_pipe[1]);
         close(stdin_pipe[0]);
 
+        // TODO: register pid in a pid->client_sock(current) map
+
+        insert_map(map, pid, client_sock);
+
         // then change client_sock to stdin_pipe[1], the place to write
 
         client_sock = stdin_pipe[1];
         printf("client_sock: %d\n", stdin_pipe[1]);
+
+        // tell server how to handle sigchild
+        struct sigaction sa;
+        sa.sa_sigaction = &sig_child_handler;
+        sa.sa_flags = SA_SIGINFO;
+
+        sigemptyset(&sa.sa_mask);
+        if (sigaction(SIGCHLD, &sa, 0) == -1)
+        {
+            perror(0);
+            exit(1);
+        }
 
         // return the other fd for log
 
@@ -1174,6 +1205,17 @@ Response *forward_cgi_request(Request *request)
     ret->close = -1;
     ret->code = -1;
 
+    return ret;
+}
+
+Response *forward_cgi_response(char *new_buf, int len, int i)
+{
+    Response *ret = malloc(sizeof(Response));
+    ret->buf = new_buf;
+    ret->real_size = len;
+    ret->size = -1;
+    ret->close = 0;
+    ret->code = -1;
     return ret;
 }
 
@@ -1296,6 +1338,7 @@ int lisod_start()
 
     /************ MAIN LOOP ************/
     table = create_table(TABLE_SIZE);
+    map = create_map(TABLE_SIZE);
 
     fd_set *readfds = malloc(sizeof(fd_set));
     int max_sd = MAX(sock, https_sock);
@@ -1364,6 +1407,35 @@ int lisod_start()
                     free(response->buf);
                     free(response);
                     printf("In 662\n");
+                }
+
+                // handling CGI clients whose requests are closed!
+
+                if (i != sock && lookup_table(table, i) != NULL && lookup_table_cgi(table, i) == -1)
+                {
+                    printf("Send a close response!\n");
+                    // send to that client that we have timed out!
+                    client_sock = i;
+                    Response *response = handle_request(NULL, 500, www_file);
+                    int k = send_reply(NULL, response, log, table, &readfds, 0);
+                    if (k == EXIT_FAILURE)
+                    {
+                        printf("1\n");
+                        free(response->buf);
+                        free(response);
+                        printf("In 1423\n");
+                        return EXIT_FAILURE;
+                    }
+                    else if (k == CLOSE_SOCKET_FAILURE)
+                    {
+                        printf("2\n");
+                        free(response->buf);
+                        free(response);
+                        printf("In 1431\n");
+                    }
+                    free(response->buf);
+                    free(response);
+                    printf("In 1435\n");
                 }
             }
             printf("Finished sending timeout responses!\n");
@@ -1503,7 +1575,7 @@ int lisod_start()
                             {
                                 printf("Reading a new line!!!\n");
                                 new_buf = realloc(new_buf, len + BUF_SIZE + 1);
-                                new_buf[len] = 0;
+                                bzero(new_buf + len, BUF_SIZE + 1);
                                 readret = receive(i, new_buf + len, client_context);
                                 len += readret;
                             }
@@ -1574,6 +1646,11 @@ int lisod_start()
                                 printf("response size: %ld, response real size: %ld\n",
                                        response->size, response->real_size);
                             }
+                            else
+                            {
+                                // get a dummy response
+                                response = forward_cgi_response(new_buf, len, i);
+                            }
 
                             // then set client_sock to be the original connection
                             client_sock = lookup_table_connection(table, i);
@@ -1592,7 +1669,8 @@ int lisod_start()
                             FD_CLR(i, readfds);
                             remove_table(table, i);
 
-                            // parsing failed
+                            // monitoring failed
+                            // already out of date
                             if (response == NULL)
                             {
                                 // send 500 to client!

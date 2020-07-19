@@ -11,15 +11,6 @@ cgitb.enable()
 
 # print("Entered Script!")
 
-time.sleep(20)
+time.sleep(10)
 
-print('woke up from sleeping!')
-
-try:
-    sys.stdout.close()
-except:
-    pass
-try:
-    sys.stderr.close()
-except:
-    pass
+sys.exit(1)

@@ -228,9 +228,9 @@ request_header: token ows t_colon ows text ows t_crlf {
 				parsing_response->close = 1;
 			}
 		}
-		if (parsing_response->real_size == 0 && strcmp($1, "Content-Length") == 0){
-			parsing_response->real_size = atoi($5);
-		}
+		// if (parsing_response->real_size == 0 && strcmp($1, "Content-Length") == 0){
+		// 	parsing_response->real_size = atoi($5);
+		// }
 		
 	}
 	// YPRINTF("request_Header:\n%s\n%s\n",$1,$5);

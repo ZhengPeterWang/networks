@@ -30,6 +30,8 @@ Request *parse(char *buffer, int size, int socketFd)
 	state = STATE_START;
 	while (state != STATE_CRLFCRLF)
 	{
+		if (offset == 8192)
+			break;
 		char expected = 0;
 
 		if (i == size)
@@ -120,6 +122,8 @@ Response *parse_response(char *buffer, int size, int socketFd)
 	state = STATE_START;
 	while (state != STATE_CRLFCRLF)
 	{
+		if (offset == 8192)
+			break;
 		char expected = 0;
 
 		if (i == size)
@@ -166,7 +170,8 @@ Response *parse_response(char *buffer, int size, int socketFd)
 		if (yyparse() == SUCCESS)
 		{
 			printf("Parsing response succeeded!\n");
-			response->real_size += i;
+			// response->real_size += i;
+			response->real_size = size;
 
 			return response;
 		}

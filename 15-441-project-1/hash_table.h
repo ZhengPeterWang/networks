@@ -21,6 +21,19 @@ typedef struct
     Node **list;
 } Table;
 
+typedef struct Map_Node
+{
+    int key;
+    int sock;
+    struct Map_Node *next;
+} Map_Node;
+
+typedef struct
+{
+    int size;
+    Map_Node **list;
+} Map;
+
 Table *create_table(int size);
 
 void insert_table(Table *t, int key, struct sockaddr *val, int connection);
@@ -40,3 +53,13 @@ SSL *lookup_table_context(Table *t, int key);
 void remove_table(Table *t, int key);
 
 void remove_all_entries_in_table(Table *t);
+
+Map *create_map(int size);
+
+void insert_map(Map *map, int key, int sock);
+
+int lookup_map(Map *map, int key);
+
+void remove_map(Map *map, int key);
+
+void destroy_map(Map *map);
