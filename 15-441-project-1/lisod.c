@@ -100,7 +100,10 @@ void lisod_cleanup()
         close_socket_https();
     remove_all_entries_in_table(table);
     if (ssl_context != NULL)
+    {
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
+    }
 }
 
 void lisod_shutdown(int ret)
@@ -295,6 +298,7 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
     // ********** CGI ***********
     else if (check_uri(request->http_uri))
     {
+        free(header);
         return NULL; // pass to the other handler
     }
 
@@ -660,7 +664,7 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
 
         strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtimespec).tv_sec;
+        time_t last_modified = (info->st_mtim).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         free(temp_buf);
@@ -911,13 +915,15 @@ char **get_env_ptrs(Request *request, int my_sock, char *addr)
     /*************** BEGIN ENVIRONMENT VARIABLES **************/
 
     // parse URI
-    char *uri = malloc(strlen(request->http_uri));
+    char *uri = malloc(strlen(request->http_uri) + sizeof(char));
+    bzero(uri, strlen(request->http_uri) + sizeof(char));
 
     strcpy(uri, request->http_uri);
 
     char *ptr = strchr(uri, '?') + 1;
 
-    char *query = malloc(strlen(ptr));
+    char *query = malloc(strlen(ptr) + sizeof(char));
+    bzero(query, strlen(ptr) + sizeof(char));
     bzero(query, strlen(ptr));
     memcpy(query, ptr, strlen(ptr));
     bzero(ptr - 1, strlen(query) + sizeof(char));
@@ -1200,6 +1206,7 @@ int lisod_start()
     if (SSL_CTX_use_PrivateKey_file(ssl_context, private_key_file, SSL_FILETYPE_PEM) == 0)
     {
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Error associating private key.\n");
         return EXIT_FAILURE;
     }
@@ -1208,6 +1215,7 @@ int lisod_start()
     if (SSL_CTX_use_certificate_file(ssl_context, cert_file, SSL_FILETYPE_PEM) == 0)
     {
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Error associating certificate.\n");
         return EXIT_FAILURE;
     }
@@ -1233,6 +1241,7 @@ int lisod_start()
     {
         close_socket_main();
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
@@ -1241,6 +1250,7 @@ int lisod_start()
     {
         close_socket_main();
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
@@ -1252,6 +1262,7 @@ int lisod_start()
     if ((https_sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         close_socket_main();
         error_log(log, "", "Failed creating HTTPS socket.\n");
         return EXIT_FAILURE;
@@ -1266,6 +1277,7 @@ int lisod_start()
         close_socket_https();
         close_socket_main();
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Failed binding HTTPS socket.\n");
         return EXIT_FAILURE;
     }
@@ -1275,6 +1287,7 @@ int lisod_start()
         close_socket_https();
         close_socket_main();
         SSL_CTX_free(ssl_context);
+        ssl_context = NULL;
         error_log(log, "", "Error listening on HTTPS socket.\n");
         return EXIT_FAILURE;
     }
@@ -1326,7 +1339,7 @@ int lisod_start()
             for (int i = 0; i < max_sd + 1; i++)
             {
                 // TODO do NOT send a timeout response to the CGI script!
-                if (i != sock && lookup_table(table, i) != NULL)
+                if (i != sock && lookup_table(table, i) != NULL && lookup_table_cgi(table, i) == 0)
                 {
                     printf("Send a timeout response!\n");
                     // send to that client that we have timed out!
@@ -1582,8 +1595,8 @@ int lisod_start()
                             // parsing failed
                             if (response == NULL)
                             {
-                                // send 400 to client!
-                                new_buf = NULL;
+                                // send 500 to client!
+                                free(new_buf);
                                 response = handle_request(NULL, 500, www_file);
                                 printf("Parsing response from CGI failed!\n");
                             }
@@ -1738,7 +1751,7 @@ int main(int argc, char *argv[])
     cert_file = argv[8];
     printf("%d %d %s %s %s %s %s %s\n", http_port, https_port, log_file, lock_file,
            www_file, cgi_file, private_key_file, cert_file);
-    signal(SIGINT, signal_handler);
+    // signal(SIGINT, signal_handler);
 
     return lisod_start();
 }
