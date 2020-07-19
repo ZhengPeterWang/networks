@@ -38,6 +38,7 @@ void insert_table(Table *t, int key, struct sockaddr *val, int connection)
     newNode->val = val;
     newNode->connection = connection;
     newNode->next = list;
+    newNode->is_cgi = 0;
     newNode->client_context = NULL;
     t->list[pos] = newNode;
 }
@@ -61,9 +62,27 @@ void insert_table_with_context(Table *t, int key, struct sockaddr *val, int conn
     newNode->val = val;
     newNode->connection = connection;
     newNode->next = list;
+    newNode->is_cgi = 0;
     newNode->client_context = client_context;
     t->list[pos] = newNode;
 }
+
+void insert_cgi(Table *t, int key, int num)
+{
+    int pos = hashCode(t, key);
+    Node *list = t->list[pos];
+    Node *temp = list;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            temp->is_cgi = num;
+            return;
+        }
+        temp = temp->next;
+    }
+}
+
 struct sockaddr *lookup_table(Table *t, int key)
 {
     int pos = hashCode(t, key);
@@ -90,6 +109,22 @@ int lookup_table_connection(Table *t, int key)
         if (temp->key == key)
         {
             return temp->connection;
+        }
+        temp = temp->next;
+    }
+    return -1;
+}
+
+int lookup_table_cgi(Table *t, int key)
+{
+    int pos = hashCode(t, key);
+    Node *list = t->list[pos];
+    Node *temp = list;
+    while (temp)
+    {
+        if (temp->key == key)
+        {
+            return temp->is_cgi;
         }
         temp = temp->next;
     }

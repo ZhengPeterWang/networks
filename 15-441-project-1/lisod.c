@@ -35,7 +35,7 @@
 #define MAX_CLIENT FD_SETSIZE
 #define MIN(x, y) x < y ? x : y
 #define MAX(x, y) x < y ? y : x
-#define WAIT 1
+#define WAIT 5
 #define CLOSE_SOCKET_FAILURE 2
 
 int num_client = 0;
@@ -635,7 +635,7 @@ Response *handle_request(Request *request, int pre_assigned_code, const char *ww
 
         strcat(header, "Last-Modified: ");
 
-        time_t last_modified = (info->st_mtim).tv_sec;
+        time_t last_modified = (info->st_mtimespec).tv_sec;
         char *temp_buf = Rfc1123_DateTime(&last_modified);
         strcat(header, temp_buf);
         free(temp_buf);
@@ -1558,6 +1558,8 @@ int main(int argc, char *argv[])
                             // then close the connection with stdout_pipe[0]
                             close(i);
 
+                            insert_cgi(table, client_sock, 0);
+
                             // decrease num_client, remove it from hash table,
                             // remove it from fd_set
                             num_client--;
@@ -1618,6 +1620,7 @@ int main(int argc, char *argv[])
                                     }
                                     else
                                     {
+                                        printf("Ready\n");
                                         // set max socket, increase num_client
                                         max_sd = MAX(max_sd, socket_num);
                                         num_client++;
@@ -1652,11 +1655,18 @@ int main(int argc, char *argv[])
                             printf("In 797\n");
                             return EXIT_FAILURE;
                         }
-                        if (response->close != -1)
+                        if (response->code == -1)
+                        {
+                            // indicate CGI via storing NULL as
+                            insert_cgi(table, i, 1);
+                        }
+                        else
                             free(response->buf);
                         free(response);
                         printf("In 802\n");
                     }
+
+                    printf("Readret: %d\n", readret);
 
                     if (readret < 0)
                     {
@@ -1673,7 +1683,7 @@ int main(int argc, char *argv[])
 
                         return EXIT_FAILURE;
                     }
-                    if (readret == 0)
+                    if (readret == 0 && lookup_table_cgi(table, i) == 0)
                     {
                         if (close_socket_client())
                         {

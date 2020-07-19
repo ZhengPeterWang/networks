@@ -24,11 +24,13 @@ s.connect((serverHost, serverPort))
 
 uri = "/make?" + environ['QUERY_STRING']
 
-host = "Host: " + environ['HTTP_HOST']
+host = "Host: artii.herokuapp.com"
 
 connection = "Connection: " + environ['HTTP_CONNECTION']
 
 request = "GET " + uri + " HTTP/1.1\r\n" + host + "\r\n" + connection + "\r\n\r\n"
+
+sys.stderr.write(request)
 
 s.send(request)
 

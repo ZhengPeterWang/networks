@@ -166,6 +166,7 @@ Response *parse_response(char *buffer, int size, int socketFd)
 		if (yyparse() == SUCCESS)
 		{
 			printf("Parsing response succeeded!\n");
+			response->real_size += i;
 
 			return response;
 		}
